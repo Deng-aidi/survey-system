@@ -8,7 +8,7 @@
 
 ### 1. 使用工具
 
-- 对话式 AI Agent（Claude）
+- Trae（AI 编程工具，对话式 Agent）
 - 人工执行 PowerShell 测试
 - 人工执行 git 命令
 
@@ -83,7 +83,7 @@
 
 ### 1. 使用工具
 
-- 对话式 AI Agent
+- Trae（AI 编程工具，对话式 Agent）
 - 人工执行 PowerShell 测试
 - 人工执行 git 命令
 
@@ -164,7 +164,7 @@
 
 ### 1. 使用工具
 
-- 对话式 AI Agent
+- Trae（AI 编程工具，对话式 Agent）
 - 人工执行 PowerShell 测试
 - 人工执行 git 命令
 
@@ -240,4 +240,111 @@
 
 ---
 
-> 下一个模块（填写端 F1 + F2 + F3）的日志接续追加到此文件。
+## Fill 模块（F1 取问卷、F2 单题校验+跳转、F3 整卷提交+重放校验）
+
+### 1. 使用工具
+
+- Trae（AI 编程工具，对话式 Agent）
+- 人工执行 PowerShell 测试
+- 人工执行 git 命令
+- 人工执行 mongosh DB 验证
+
+### 2. 提示词摘要
+
+> 按 API 契约 v1.2.1 实现填写端 F1/F2/F3。新建 `routes/fill.js` 挂载 `/api/surveys/by-token`、`middleware/optionalAuth.js`（条件鉴权：有 Bearer 头则验签挂 req.user，无头放行）、`utils/jumpResolver.js`（`condition_matches` 支持 6 种 operator、`resolve_next_question` 返回 `{ matched, target }`）。复用 `validateAnswer`。不改 `routes/surveys.js` 和 `models/Survey.js`，不生成前端与统计代码。
+
+### 3. AI 产出
+
+| 文件 | 内容 |
+|------|------|
+| `middleware/optionalAuth.js` | 新建。有 Bearer 头则验签挂 req.user，无头或验签失败均放行 |
+| `utils/jumpResolver.js` | 新建。`condition_matches` 支持 equals/includes/gte/lte/eq/between 6 种 operator；`resolve_next_question` 返回 `{ matched, target }` 结构，消除 null 二义性 |
+| `routes/fill.js` | 新建。F1 取问卷（不含 creator_id）、F2 单题校验+跳转（无状态）、F3 重放路径+全量校验+落库；公共函数 `loadAccessibleSurvey` |
+| `server.js` | 引入并挂载 fillRouter，置于 `/api/surveys` 之前 |
+
+### 4. 我 review 中发现并要求修改的点
+
+| # | 优先级 | 问题 | 修正 |
+|---|:---:|------|------|
+| 1 | P0 | **draft 问卷可被填写**。`loadAccessibleSurvey` 原只拦 closed 和过期，draft 放行会导致"未发布即可填"且绕过 S5 发布校验 | 改为 `status !== 'open'` 一律 403，draft 用 `SURVEY_NOT_OPEN`、closed 用 `SURVEY_CLOSED` 区分 |
+| 2 | P1 | F2 校验失败的 errors 是 `string[]`，与契约要求的 `[{question_id, reason}]` 不一致，前端要为 F2/F3 写两套解析 | 改为 `result.errors.map((reason) => ({ question_id, reason }))` |
+| 3 | P2 | F3 的 answers 里重复 question_id 静默 last-wins | 加 `seenQids` Set 检测，重复返回 400 |
+
+### 5. AI 做错了什么
+
+本轮无"声称改了但未落地"问题。AI 按约束执行 Read → Edit → Read 并贴出从文件实际读取的代码块。但设计层面有 1 个 P0 语义漏洞（draft 可填写），由我在 review 阶段发现，不是 AI 自查发现。
+
+### 6. 我对 AI 提出的 6 条设计决策的裁决
+
+| # | 决策 | 裁决 |
+|---|------|------|
+| 1 | `skipped_count` = 题目总数 - 已答题数 | 接受 |
+| 2 | F3 题目归属检查提前到重放之前 | 接受，可观察结果相同（都是 409） |
+| 3 | optionalAuth 无效 token 静默按匿名 | 接受，写入已知限制 |
+| 4 | F3 循环保护 | 保留，必要。路径不完整导致的额外误报写入已知限制 |
+| 5 | F2 题目不存在返回 400 + `QUESTION_NOT_FOUND` | 接受 |
+| 6 | draft 可填写 | 不接受，见 P0 |
+
+### 7. __v 说明（良性特性，非限制）
+
+**说明：本节修正 Survey CRUD 模块第 8 节 D2 的判断。** 当时认为 __v 只在数组变更时递增不够用、需要显式 $inc；实际开发 F 模块时验证发现，影响填写路径的所有操作（加题、改 jump_rules）恰好都是 questions[] 数组变更，__v 天然递增已足够覆盖，无需显式 $inc。原 D2 的"已知限制"判断不成立，以本节为准。
+
+Mongoose 的 `__v` 在数组字段变更时递增，而"题目增删/修改 jump_rules"恰好都是 `questions[]` 数组变更，因此 `expected_version` 能覆盖所有影响填写路径的结构性变化。`title`/`status`/`description` 变更不递增 `__v`，但不影响填写逻辑。实测 F1-1 返回 `__v=7`，与多次加题、设规则的次数吻合。
+
+### 8. 测试结果
+
+所有测试在本地 PowerShell 终端执行，服务器由 `npm run dev` 启动。23 条全部通过（F1×6、F2×9、F3×8，含 DB 验证）。
+
+F1：
+
+| # | 测试场景 | 预期 | 实际 | 通过 |
+|---|---------|------|------|:----:|
+| F1-1 | 匿名问卷无 token 取 | 200 | 200，status=open，q=4，无 creator_id，__v=7 | ✅ |
+| F1-2 | 非匿名无 token | 401 | 401 LOGIN_REQUIRED | ✅ |
+| F1-3 | 非匿名带 token | 200 | 200 | ✅ |
+| F1-4 | draft 问卷 | 403 | 403 SURVEY_NOT_OPEN | ✅ |
+| F1-5 | closed 问卷 | 403 | 403 SURVEY_CLOSED | ✅ |
+| F1-6 | token 不存在 | 404 | 404 SURVEY_NOT_FOUND | ✅ |
+
+F2：
+
+| # | 测试场景 | 预期 | 实际 | 通过 |
+|---|---------|------|------|:----:|
+| F2-1 | Q1=male（不命中规则） | valid=true，next 非空 | valid=true，next=QT（默认下一题） | ✅ |
+| F2-2 | QN=30（最后一题，不命中 gte60） | valid=true，next=null | valid=true，next=null | ✅ |
+| F2-3 | QM 空数组（必答） | valid=false | valid=false，errors=[{question_id, reason:"本题必答"}] | ✅ |
+| F2-4 | QM 选 3 个超 max=2 | valid=false | valid=false | ✅ |
+| F2-5 | QN=3.5（integer=true） | valid=false | valid=false | ✅ |
+| F2-6 | Q1=other（命中 equals→null） | valid=true，next=null | valid=true，next=null | ✅ |
+| F2-7 | QM=[apple,banana]（命中 includes→null） | valid=true，next=null | valid=true，next=null | ✅ |
+| F2-8 | QM=[apple]（不命中） | valid=true，next 非空 | valid=true，next=QN（默认下一题） | ✅ |
+| F2-9 | 缺 question_id | 400 | 400 MALFORMED_REQUEST | ✅ |
+
+F3：
+
+| # | 测试场景 | 预期 | 实际 | 通过 |
+|---|---------|------|------|:----:|
+| F3-1 | 登录用户完整提交 4 题 | 201 | 201，answered=4，skipped=0 | ✅ |
+| F3-2 | 匿名未登录完整提交 | 201 | 201，answered=4 | ✅ |
+| F3-3 | Q1=other 跳结束，QM/QN 必答被绕过 | 201，不校验被跳过题 | 201，answered=1，skipped=3（不报必答错） | ✅ |
+| F3-4 | 路径内漏答必答 QN | 400 | 400 FINAL_VALIDATION_FAILED，errors 含 QN 必答未作答 | ✅ |
+| F3-5 | Q1=other 路径外又带 QM | 400 | 400 FINAL_VALIDATION_FAILED，errors 含"该题目不在本次填写路径上" | ✅ |
+| F3-6 | expected_version=999 冲突 | 409 | 409 SURVEY_CONFLICT | ✅ |
+| F3-7 | answers 不是数组 | 400 | 400 MALFORMED_REQUEST | ✅ |
+| F3-8 | DB 验证 SUB1/SUB2 | DB 形态正确 | SUB1 user_id=ObjectId(bob)，SUB2 user_id=null；answers 4 条按 order 排，question_type 齐全，answer 形态 String/String/String[]/Number | ✅ |
+
+关键对照：F2-1(QT) vs F2-6(null)、F2-8(QN) vs F2-7(null) 两组证明跳转解释器真正数据驱动；F3-3 vs F3-4 证明重放路径能区分"跳转绕过必答"和"真漏答必答"。
+
+### 9. 已知限制
+
+| # | 限制 | 说明 |
+|---|------|------|
+| 1 | optionalAuth 对无效/过期 token 静默按匿名处理 | 过期 token 访问非匿名问卷会得到 LOGIN_REQUIRED 而非 TOKEN_EXPIRED，UX 稍差 |
+| 2 | F3 循环保护提前 break 时 path_ids 不完整 | 可能同时报"循环"和"不在路径上"两类错误 |
+| 3 | started_at 与 submitted_at 均取提交时刻 | 未接入真实开始填写时间（F1 未下发会话标识） |
+| 4 | expected_version 用严格 `!==` 比较 | 前端传字符串 `"0"` 会被判为冲突 |
+| 5 | user_id 直接 `new ObjectId(req.user._id)` | 若 JWT 中 `_id` 非 24 位 hex 会抛错转为 500 |
+
+---
+
+> 下一个模块（统计 T1 + T2）的日志接续追加到此文件。

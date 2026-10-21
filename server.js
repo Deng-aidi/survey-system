@@ -6,6 +6,7 @@ const connectDB = require('./config/db');
 
 const authRoutes = require('./routes/auth');
 const surveyRoutes = require('./routes/surveys');
+const fillRoutes = require('./routes/fill');
 
 // 提前注册 Submission model —— Survey.deleteOne 的 pre hook 要用到它
 require('./models/Submission');
@@ -30,6 +31,8 @@ app.get('/', (req, res) => {
 
 // ── 路由注册 ──
 app.use('/api/auth', authRoutes);
+// 填写端必须以 by-token 前缀挂载，且放在 /api/surveys 之前
+app.use('/api/surveys/by-token', fillRoutes);
 app.use('/api/surveys', surveyRoutes);
 
 // ── 404 兜底 ──

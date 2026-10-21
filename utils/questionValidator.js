@@ -245,8 +245,107 @@ function validate_all_jump_rules_for_publish(survey) {
   return errors;
 }
 
+// ─────────────────────────────────────────────
+// F2/F3：单题答案校验
+// question 为 surveys.questions[] 子文档，answer 为提交的答案
+// 返回 { valid: boolean, errors: string[] }
+// ─────────────────────────────────────────────
+function validateAnswer(question, answer) {
+  const errors = [];
+  if (!question) {
+    return { valid: false, errors: ['题目不存在'] };
+  }
+
+  const { type, required, options, validation } = question;
+
+  // 空答案判定：undefined / null / 空字符串 / 空数组
+  const isEmpty =
+    answer === undefined ||
+    answer === null ||
+    (typeof answer === 'string' && answer.trim() === '') ||
+    (Array.isArray(answer) && answer.length === 0);
+
+  if (isEmpty) {
+    if (required) errors.push('本题必答');
+    return { valid: errors.length === 0, errors };
+  }
+
+  if (type === 'single_choice') {
+    if (typeof answer !== 'string') {
+      errors.push('单选题答案必须是选项 value 字符串');
+    } else {
+      const values = (options || []).map((o) => o.value);
+      if (!values.includes(answer)) {
+        errors.push(`答案不在选项范围内：${answer}`);
+      }
+    }
+  } else if (type === 'multiple_choice') {
+    if (!Array.isArray(answer)) {
+      errors.push('多选题答案必须是数组');
+    } else {
+      const values = (options || []).map((o) => o.value);
+      const seen = new Set();
+      for (const v of answer) {
+        if (typeof v !== 'string') {
+          errors.push('多选题答案的每个元素必须是选项 value 字符串');
+          continue;
+        }
+        if (!values.includes(v)) {
+          errors.push(`答案不在选项范围内：${v}`);
+        }
+        if (seen.has(v)) {
+          errors.push(`多选题答案重复：${v}`);
+        }
+        seen.add(v);
+      }
+      if (validation) {
+        const { min_choices, max_choices } = validation;
+        if (min_choices !== undefined && answer.length < min_choices) {
+          errors.push(`至少选择 ${min_choices} 项`);
+        }
+        if (max_choices !== undefined && answer.length > max_choices) {
+          errors.push(`最多选择 ${max_choices} 项`);
+        }
+      }
+    }
+  } else if (type === 'text') {
+    if (typeof answer !== 'string') {
+      errors.push('文本题答案必须是字符串');
+    } else if (validation) {
+      const { min_length, max_length } = validation;
+      if (min_length !== undefined && answer.length < min_length) {
+        errors.push(`文本长度不能少于 ${min_length} 个字符`);
+      }
+      if (max_length !== undefined && answer.length > max_length) {
+        errors.push(`文本长度不能超过 ${max_length} 个字符`);
+      }
+    }
+  } else if (type === 'number') {
+    if (typeof answer !== 'number' || !Number.isFinite(answer)) {
+      errors.push('数字题答案必须是有效数字');
+    } else if (validation) {
+      const { min, max, integer } = validation;
+      // integer=true 时必须为整数（AC7）
+      if (integer === true && !Number.isInteger(answer)) {
+        errors.push('答案必须是整数');
+      }
+      if (min !== undefined && answer < min) {
+        errors.push(`答案不能小于 ${min}`);
+      }
+      if (max !== undefined && answer > max) {
+        errors.push(`答案不能大于 ${max}`);
+      }
+    }
+  } else {
+    errors.push(`未知题型：${type}`);
+  }
+
+  return { valid: errors.length === 0, errors };
+}
+
 module.exports = {
   validateQuestionInput,
   validateJumpRulesExist,
   validate_all_jump_rules_for_publish,
+  validateAnswer,
 };
