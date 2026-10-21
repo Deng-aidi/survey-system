@@ -347,4 +347,77 @@ F3：
 
 ---
 
-> 下一个模块（统计 T1 + T2）的日志接续追加到此文件。
+## Stats 模块（T1 整卷统计、T2 单题统计）
+
+### 1. 使用工具
+
+- Trae（AI 编程工具，对话式 Agent）
+- 人工执行 PowerShell 测试
+- 人工执行 git 命令
+
+### 2. 提示词摘要
+
+> 实现 T1 整卷统计（支持 `?questionId=` 可选筛选）、T2 单题统计，严格按 API 契约 v1.2.1。单选 `$group by answer`，多选 `$unwind answer` 再 `$group`，数字 `$avg/$min/$max`，文本 `$push`。option.value → label 映射由后端做，零计数选项保留。聚合不 `$lookup`，questions 定义从已查到的 survey 文档取。可新建 routes/stats.js 或复用 routes/surveys.js，stats 路由必须注册在 `GET /:surveyId` 之前。
+
+### 3. AI 产出
+
+| 文件 | 内容 |
+|------|------|
+| `routes/surveys.js` | 新增 `Submission` 导入、`buildQuestionStats` 公共函数、T1/T2 两路由（注册在 `GET /:surveyId` 之前） |
+| 其他文件 | 未新建 routes/stats.js，未修改其他文件 |
+
+### 4. 方案选择
+
+选 surveys.js 而非新建 stats.js：统计是问卷的创建者子资源，`authenticate + requireSurveyOwner` 已现成接线，server.js 零改动。
+
+### 5. 我拍板的 3 个决策
+
+| # | 决策 |
+|---|------|
+| 1 | T1 的 `?questionId=` 不存在返回 404 QUESTION_NOT_FOUND，与 T2 一致 |
+| 2 | 响应按题型只含相关字段：choice 无 stats/all_values，number/text 无 option_counts |
+| 3 | 多选 answer_count 用额外 countDocuments 单独计数（Σcount 是选择次数不是作答次数） |
+
+### 6. 我 review 确认的 5 个关键点
+
+1. 零计数选项按 question.options 顺序遍历补 0，不是只遍历聚合结果。
+2. stats 路由注册在 GET /:surveyId 之前。
+3. number 无数据时 stats 全 null，不是 0。
+4. 多选两次 $unwind（先 answers 再 answers.answer）。
+5. answer_count 与 total_submissions 独立。
+
+### 7. AI 做错了什么
+
+本轮无"声称改了但未落地"问题，代码一次通过 review。设计决策由 AI 提出、我拍板，无返工。
+
+### 8. 测试结果
+
+12 条全部通过。
+
+| # | 测试场景 | 预期 | 实际 | 通过 |
+|---|---------|------|------|:----:|
+| T1-1 | 整卷统计 | total=3，4 题 | total=3，questions=4 | ✅ |
+| T1-2 | Q1 单选 | male=2 other=1 female=0 | answer_count=3，male=2 female=0 other=1（零计数保留） | ✅ |
+| T1-3 | QM 多选 | apple=2 banana=0 grape=0 | answer_count=2，apple=2 banana=0 grape=0 | ✅ |
+| T1-4 | QN 数字 | count=2 avg=27.5 min=25 max=30 | 全部符合，all_values=30,25 | ✅ |
+| T1-5 | QT 文本 | count=2，含 good/anon | all_values=good\|anon | ✅ |
+| T1-6 | ?questionId= 筛选 | 只返回 Q1 | questions=1，id=Q1 | ✅ |
+| T1-7 | 非创建者 charlie | 403 | 403 | ✅ |
+| T1-8 | 无 token | 401 | 401 | ✅ |
+| T1-9 | surveyId 不存在 | 404 | 404 | ✅ |
+| T1-10 | S_B 零提交问卷 | total=0，选项全 0 | total=0 answer_count=0，a=0 b=0 | ✅ |
+| T2-1 | 单题统计 | Q1，count=3 | question_id=Q1，answer_count=3 | ✅ |
+| T2-2 | questionId 不属于该问卷 | 404 | 404 | ✅ |
+
+关键验证：T1-2 的 female=0 和 T1-3 的 banana=0/grape=0 证明零计数选项按 options 顺序补全，前端画图不会缺项；T1-4 的 avg=27.5 证明数字聚合正确；T1-10 证明零提交时结构完整。
+
+### 9. 已知限制
+
+| # | 限制 | 说明 |
+|---|------|------|
+| 1 | T1 对 N 道题做 N 个聚合管道 + 多选题额外 countDocuments | 数据量大时是 N+1 次查询；题目量小可接受 |
+| 2 | `all_values` 无分页 | 文本题答案量大时响应体积不可控 |
+
+---
+
+> 下一个模块（前端页面）的日志接续追加到此文件。

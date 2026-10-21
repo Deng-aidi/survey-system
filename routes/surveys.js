@@ -1,6 +1,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const Survey = require('../models/Survey');
+const Submission = require('../models/Submission');
 const authenticate = require('../middleware/auth');
 const requireSurveyOwner = require('../middleware/ownership');
 const {
@@ -79,6 +80,159 @@ router.get('/', authenticate, async (req, res) => {
     res.status(200).json(surveys);
   } catch (err) {
     console.error('[surveys GET /]', err);
+    res.status(500).json({ code: 'INTERNAL_ERROR', message: '服务器内部错误' });
+  }
+});
+
+// ─────────────────────────────────────────────────────
+// T1/T2 公共：单题统计
+// 一题一管道；option.value → label 映射由后端完成；
+// 未出现在提交中的选项保留 count:0（按 question.options 顺序遍历）
+// ─────────────────────────────────────────────────────
+async function buildQuestionStats(survey, question) {
+  const qid = question._id;
+  const base = {
+    question_id: qid,
+    question_title: question.title,
+    question_type: question.type,
+  };
+
+  if (question.type === 'single_choice' || question.type === 'multiple_choice') {
+    const pipeline = [
+      { $match: { survey_id: survey._id } },
+      { $unwind: '$answers' },
+      { $match: { 'answers.question_id': qid } },
+    ];
+    // 多选：answer 是数组，再展开一次，每个选中值算一票
+    if (question.type === 'multiple_choice') {
+      pipeline.push({ $unwind: '$answers.answer' });
+    }
+    pipeline.push({ $group: { _id: '$answers.answer', count: { $sum: 1 } } });
+
+    const agg = await Submission.aggregate(pipeline);
+    const countMap = new Map(agg.map((r) => [String(r._id), r.count]));
+
+    // 按 options 顺序遍历，聚合结果里查不到的选项补 0
+    const option_counts = (question.options || []).map((opt) => ({
+      option_label: opt.label,
+      option_value: opt.value,
+      count: countMap.get(opt.value) || 0,
+    }));
+
+    // answer_count = 该题被作答次数，可能小于 total_submissions（非必答被跳过、被跳转绕过）
+    // 多选的 sum(count) 是"选择次数"不是"作答次数"，需按 submission 单独计数
+    let answer_count;
+    if (question.type === 'single_choice') {
+      answer_count = agg.reduce((s, r) => s + r.count, 0);
+    } else {
+      answer_count = await Submission.countDocuments({
+        survey_id: survey._id,
+        'answers.question_id': qid,
+      });
+    }
+
+    return { ...base, answer_count, option_counts };
+  }
+
+  if (question.type === 'number') {
+    const [agg] = await Submission.aggregate([
+      { $match: { survey_id: survey._id } },
+      { $unwind: '$answers' },
+      { $match: { 'answers.question_id': qid } },
+      {
+        $group: {
+          _id: null,
+          avg: { $avg: '$answers.answer' },
+          min: { $min: '$answers.answer' },
+          max: { $max: '$answers.answer' },
+          values: { $push: '$answers.answer' },
+          answer_count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    return {
+      ...base,
+      answer_count: agg ? agg.answer_count : 0,
+      // 无数据时 avg/min/max 全为 null
+      stats: agg
+        ? { avg: agg.avg, min: agg.min, max: agg.max }
+        : { avg: null, min: null, max: null },
+      all_values: agg ? agg.values : [],
+    };
+  }
+
+  // text：聚合所有文本答案
+  const [agg] = await Submission.aggregate([
+    { $match: { survey_id: survey._id } },
+    { $unwind: '$answers' },
+    { $match: { 'answers.question_id': qid } },
+    {
+      $group: {
+        _id: null,
+        values: { $push: '$answers.answer' },
+        answer_count: { $sum: 1 },
+      },
+    },
+  ]);
+
+  return {
+    ...base,
+    answer_count: agg ? agg.answer_count : 0,
+    all_values: agg ? agg.values : [],
+  };
+}
+
+/**
+ * T1：GET /api/surveys/:surveyId/stats
+ * 整卷统计；?questionId= 可选筛选单题（不存在 → 404）
+ * 注册在 GET /:surveyId 之前，避免被单段路由抢占
+ */
+router.get('/:surveyId/stats', authenticate, requireSurveyOwner, async (req, res) => {
+  try {
+    const survey = req.survey;
+    const total_submissions = await Submission.countDocuments({ survey_id: survey._id });
+
+    let questions = survey.questions;
+    if (req.query.questionId !== undefined) {
+      const target = questions.filter((q) => q._id.toString() === req.query.questionId);
+      if (target.length === 0) {
+        return res.status(404).json({ code: 'QUESTION_NOT_FOUND', message: '题目不存在' });
+      }
+      questions = target;
+    }
+
+    // 一题一管道，并行执行
+    const questionStats = await Promise.all(questions.map((q) => buildQuestionStats(survey, q)));
+
+    res.status(200).json({
+      survey_id: survey._id,
+      survey_title: survey.title,
+      total_submissions,
+      questions: questionStats,
+    });
+  } catch (err) {
+    console.error('[stats T1]', err);
+    res.status(500).json({ code: 'INTERNAL_ERROR', message: '服务器内部错误' });
+  }
+});
+
+/**
+ * T2：GET /api/surveys/:surveyId/stats/:questionId
+ * 单题统计，响应结构与 T1 的 questions[i] 相同
+ */
+router.get('/:surveyId/stats/:questionId', authenticate, requireSurveyOwner, async (req, res) => {
+  try {
+    const survey = req.survey;
+    const question = survey.questions.find((q) => q._id.toString() === req.params.questionId);
+    if (!question) {
+      return res.status(404).json({ code: 'QUESTION_NOT_FOUND', message: '题目不存在' });
+    }
+
+    const stats = await buildQuestionStats(survey, question);
+    res.status(200).json(stats);
+  } catch (err) {
+    console.error('[stats T2]', err);
     res.status(500).json({ code: 'INTERNAL_ERROR', message: '服务器内部错误' });
   }
 });
