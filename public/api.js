@@ -22,18 +22,22 @@
     localStorage.removeItem(USERNAME_KEY);
   }
 
-  async function request(path, options) {
+  // extra.skip401Redirect：fill 页的 401 是业务态（仅限登录用户填写），不能自动跳登录页
+  async function request(path, options, extra) {
     options = options || {};
+    extra = extra || {};
     const headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers || {});
     const token = getToken();
     if (token) headers['Authorization'] = 'Bearer ' + token;
 
     const res = await fetch(path, Object.assign({}, options, { headers: headers }));
 
-    // 401：清登录态并跳回登录页
+    // 401：清登录态并跳回登录页（skip401Redirect 时只抛错，由页面自行处理）
     if (res.status === 401) {
-      clearAuth();
-      window.location.href = 'index.html';
+      if (!extra.skip401Redirect) {
+        clearAuth();
+        window.location.href = 'index.html';
+      }
       const err401 = new Error('未登录或登录已过期');
       err401.code = 'UNAUTHORIZED';
       err401.status = 401;
@@ -70,9 +74,9 @@
     getUsername: getUsername,
     clearAuth: clearAuth,
     request: request,
-    get: function (path) { return request(path, { method: 'GET' }); },
-    post: function (path, body) { return request(path, { method: 'POST', body: toBody(body) }); },
-    patch: function (path, body) { return request(path, { method: 'PATCH', body: toBody(body) }); },
-    del: function (path) { return request(path, { method: 'DELETE' }); },
+    get: function (path, extra) { return request(path, { method: 'GET' }, extra); },
+    post: function (path, body, extra) { return request(path, { method: 'POST', body: toBody(body) }, extra); },
+    patch: function (path, body, extra) { return request(path, { method: 'PATCH', body: toBody(body) }, extra); },
+    del: function (path, extra) { return request(path, { method: 'DELETE' }, extra); },
   };
 })();

@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>填写问卷</title>
+  <style>
+    body { font-family: sans-serif; max-width: 640px; margin: 24px auto; padding: 0 16px; }
+    .msg { min-height: 20px; margin: 8px 0; }
+    .msg.error { color: #c00; }
+    .msg.ok { color: #080; }
+    .q-block { border: 1px solid #ddd; padding: 16px; margin: 16px 0; }
+    .q-block label { display: block; margin: 4px 0; }
+    .q-block textarea, .q-block input[type="number"] { width: 100%; box-sizing: border-box; padding: 6px; }
+    .q-block textarea { min-height: 80px; }
+    button { cursor: pointer; padding: 6px 14px; }
+    .actions { margin-top: 12px; }
+    #view-success { text-align: center; padding: 24px; }
+    .hint { color: #666; font-size: 13px; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <div id="view-loading">加载中…</div>
+
+  <div id="view-error" style="display:none">
+    <p id="error-text" class="msg error"></p>
+    <p id="error-login" style="display:none"><a href="index.html">去登录</a></p>
+  </div>
+
+  <div id="view-survey" style="display:none">
+    <h1 id="s-title"></h1>
+    <p id="s-desc" class="hint"></p>
+
+    <div id="q-body"></div>
+
+    <div id="q-errors" class="msg error"></div>
+
+    <div class="actions">
+      <button id="btn-next" type="button">下一题</button>
+      <button id="btn-submit" type="button" style="display:none">提交</button>
+    </div>
+
+    <div id="view-success" style="display:none">
+      <h2>提交成功</h2>
+      <p>submission_id：<span id="sub-id"></span></p>
+    </div>
+  </div>
+
+  <script src="api.js"></script>
+  <script src="fill.js"></script>
+</body>
+</html>

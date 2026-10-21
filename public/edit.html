@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>编辑问卷</title>
+  <style>
+    body { font-family: sans-serif; max-width: 760px; margin: 24px auto; padding: 0 16px; }
+    header { display: flex; justify-content: space-between; align-items: center; }
+    form { display: flex; flex-direction: column; gap: 8px; margin: 16px 0; padding: 12px; border: 1px solid #ccc; }
+    input, select, textarea { padding: 6px; }
+    .msg { min-height: 20px; margin: 8px 0; }
+    .msg.error { color: #c00; }
+    .msg.ok { color: #080; }
+    button { cursor: pointer; }
+    .q-card { border: 1px solid #ddd; padding: 12px; margin: 12px 0; }
+    .q-card h3 { margin: 0 0 6px; }
+    .q-meta { color: #666; font-size: 13px; margin-bottom: 6px; }
+    .q-options { color: #444; font-size: 13px; }
+    .jump-rules { margin: 8px 0; padding-left: 20px; font-size: 13px; }
+    .jump-form { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; padding: 8px; background: #f7f7f7; }
+    .option-row { display: flex; gap: 6px; align-items: center; }
+    .option-row input { flex: 1; }
+    .errors-list { color: #c00; padding-left: 20px; }
+    #readonly-tip { color: #a60; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>编辑问卷</h1>
+    <a href="surveys.html">返回列表</a>
+  </header>
+
+  <div id="msg" class="msg"></div>
+
+  <section id="survey-info" style="display:none">
+    <p>
+      <strong id="e-title"></strong>
+      状态：<span id="e-status"></span>
+      <button id="btn-publish" type="button">发布</button>
+    </p>
+    <p id="readonly-tip" style="display:none">问卷已发布，内容为只读，不能再添加题目或修改跳转。</p>
+    <ul id="publish-errors" class="errors-list"></ul>
+  </section>
+
+  <section id="question-list"></section>
+
+  <h2>添加题目</h2>
+  <form id="form-add">
+    <input id="a-title" type="text" placeholder="题目标题（必填）">
+    <select id="a-type">
+      <option value="single_choice">单选</option>
+      <option value="multiple_choice">多选</option>
+      <option value="text">文本</option>
+      <option value="number">数字</option>
+    </select>
+    <label><input id="a-required" type="checkbox"> 必答题</label>
+
+    <div id="a-fields-choice">
+      <div id="a-options"></div>
+      <button type="button" id="a-add-option">+ 添加选项</button>
+    </div>
+    <div id="a-fields-multiple" style="display:none">
+      <input id="a-min-choices" type="number" min="0" placeholder="最少选择数（可选）">
+      <input id="a-max-choices" type="number" min="0" placeholder="最多选择数（可选）">
+    </div>
+    <div id="a-fields-text" style="display:none">
+      <input id="a-min-length" type="number" min="0" placeholder="最小长度（可选）">
+      <input id="a-max-length" type="number" min="0" placeholder="最大长度（可选）">
+    </div>
+    <div id="a-fields-number" style="display:none">
+      <input id="a-min" type="number" step="any" placeholder="最小值（可选）">
+      <input id="a-max" type="number" step="any" placeholder="最大值（可选）">
+      <label><input id="a-integer" type="checkbox"> 仅允许整数</label>
+    </div>
+
+    <button type="submit">添加题目</button>
+  </form>
+
+  <script src="api.js"></script>
+  <script src="edit.js"></script>
+</body>
+</html>
