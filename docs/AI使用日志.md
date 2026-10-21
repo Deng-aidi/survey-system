@@ -160,4 +160,84 @@
 
 ---
 
-> 下一个模块（Question：Q1 添加题 / Q2 修改 jump_rules）的日志接续追加到此文件。
+## Question 模块（Q1 添加题、Q2 修改 jump_rules、S5 发布校验）
+
+### 1. 使用工具
+
+- 对话式 AI Agent
+- 人工执行 PowerShell 测试
+- 人工执行 git 命令
+
+### 2. 提示词摘要
+
+> 基于已冻结的 API 契约 v1.2.1，只生成 Question 相关路由与校验：Q1 POST /:surveyId/questions（四种题型，不允许传 jump_rules）、Q2 PATCH /:surveyId/questions/:questionId/jump_rules（白名单只允许 jump_rules，混传其他字段 400）、S5 PATCH status 时接入发布前完整校验。校验逻辑抽到 utils/questionValidator.js，三个函数分别负责 Q1 格式校验、Q2 存在性校验、S5 完整校验（存在性+向前+无环）。
+
+### 3. AI 产出
+
+新建 1 个文件 + 修改 1 个文件：
+
+| 文件 | 内容 |
+|------|------|
+| `utils/questionValidator.js` | 3 个函数：`validateQuestionInput`（Q1 题目格式校验）、`validateJumpRulesExist`（Q2 jump_rules 存在性校验）、`validate_all_jump_rules_for_publish`（S5 发布前完整校验：存在性 + 向前 + DFS 无环） |
+| `routes/surveys.js` | 新增 Q1、Q2 两个路由；S5 status→open 时调用 `validate_all_jump_rules_for_publish`，未通过返回 422 `INVALID_JUMP_RULE` |
+
+### 4. 我在 Review 中发现并要求 AI 修改的点
+
+| # | 问题 | 位置 | 修正 |
+|---|------|------|------|
+| 1 | Q1 未校验 `options[].value`：只检查了 label，没检查 value 非空、value 唯一。漏 value 会导致 F2 答题无法匹配、跳转规则无法用 option.value 比较 | `utils/questionValidator.js` validateQuestionInput choice 分支 | 加 `values` Set，检查 `opt.value` 非空字符串 + value 唯一，判重同样用 `trim().toLowerCase()` 归一化，存储仍保留原始 value |
+| 2 | Q2 未校验 `jump_rules[].condition` 结构：没检查 `condition.operator` 枚举和 `condition.value` 存在性。非法 operator 存入 DB 后 F2 执行 condition_matches 静默失效 | `utils/questionValidator.js` validateJumpRulesExist | 加 `allowedOperators = ['equals','includes','gte','lte','eq','between']`，检查 condition 对象存在、operator 在枚举内、value !== undefined |
+| 3 | multiple_choice 的 `min_choices` 未检查 > options.length：options.length=2、min_choices=3 时校验通过，填写永远无法满足，问卷变死题 | `utils/questionValidator.js` validateQuestionInput multiple_choice 分支 | 补 `min_choices > options.length` 检查，与 max_choices 检查并列 |
+| 4 | label 判重原是精确字符串匹配，未归一化 | `utils/questionValidator.js` | 改为 `trim().toLowerCase()` 归一化判重，存储仍保留原始 label；value 判重同样归一化 |
+
+### 5. AI 做错了什么（第三次同类问题：声称验证但未贴代码）
+
+| # | 问题 | 现象 | 暴露方式 |
+|---|------|------|---------|
+| 1 | **表格描述替代代码块**：AI 声称"Read 验证了修改"，回复里用表格写"确认第 XX 行"，但没有贴出从文件实际读取的代码块 | 我 review 时无法直接核对代码逻辑，只能看到行号和描述 | 由我指出"表格描述不能替代代码"，要求 AI 从文件实际读取并贴出完整代码块后才确认 |
+
+> 这是同类问题的第三次：前两次是 illegal 检查未落地、CastError 分支未落地（均由测试发现），本次是"声称 Read 验证但未贴代码"（由我在 review 阶段指出）。三次的共同根因是 AI 倾向于用描述代替实际证据。
+
+### 6. 教训与修正
+
+- 每次声称修改后，**必须贴出从文件实际读取的代码块**，不能只给行号、表格描述或"修改后片段"。
+- 本轮之后 AI 已能规范执行 **Read → Edit → Read → 贴出实际代码** 流程。
+
+### 7. 测试结果
+
+所有测试在本地 PowerShell 终端执行，服务器由 `npm run dev` 启动。19 条全部通过。
+
+| # | 测试场景 | 方法 + URL | 预期 | 实际 | 通过 |
+|---|---------|-----------|------|------|:----:|
+| Q1-1 | 添加单选题（中文 label+value） | POST /:id/questions | 201 | 201，order=0，jump_rules=[] | ✅ |
+| Q1-2 | 添加数字题（中文） | POST /:id/questions | 201 | 201，order=1 | ✅ |
+| Q1-3 | Q1 传 jump_rules 字段 | POST /:id/questions | 400 | 400 | ✅ |
+| Q1-4 | choice 选项缺 value | POST /:id/questions | 400 | 400 | ✅ |
+| Q1-5 | choice 选项 value 大小写重复（v1 与 V1） | POST /:id/questions | 400 | 400 | ✅ |
+| Q1-6 | multiple_choice min_choices=3 但只有 2 个选项 | POST /:id/questions | 400 | 400 | ✅ |
+| Q1-7 | 添加多选题（3 选项，validation min_choices:1 max_choices:2） | POST /:id/questions | 201 | 201，order=2，type=multiple_choice，options=3，validation 正确 | ✅ |
+| Q1-8 | 添加文本题（validation min_length:0 max_length:500） | POST /:id/questions | 201 | 201，order=3，type=text，validation 正确 | ✅ |
+| Q2-1 | 设置合法 jump_rules（equals other → null） | PATCH .../jump_rules | 200 | 200，count=1 | ✅ |
+| Q2-2 | condition.operator 非法（hacked） | PATCH .../jump_rules | 400 | 400 | ✅ |
+| Q2-3 | condition.value 缺失 | PATCH .../jump_rules | 400 | 400 | ✅ |
+| Q2-4 | targetQuestionId 引用不存在的题目 | PATCH .../jump_rules | 400 | 400 | ✅ |
+| Q2-5 | 混传 {jump_rules:[], title:"篡改"} | PATCH .../jump_rules | 400 | 400 | ✅ |
+| Q2-6 | jump_rules 传空数组清空规则 | PATCH .../jump_rules | 200 | 200，count=0 | ✅ |
+| Q2-7 | questionId 不存在 | PATCH .../questions/507f.../jump_rules | 404 | 404 | ✅ |
+| S5-1 | 合法规则发布 open | PATCH /:id/status | 200 | 200，status=open | ✅ |
+| S5-2 | 回跳规则（Q1 order=0 跳回 Q1）发布 open | PATCH /:id/status | 422 | 422，INVALID_JUMP_RULE | ✅ |
+| S5-3 | 非法规则但 status→draft（不校验） | PATCH /:id/status | 200 | 200，status=draft | ✅ |
+| Q1-9 | 无 token 调 Q1 | POST /:id/questions | 401 | 401 | ✅ |
+
+### 8. 已知限制
+
+| # | 限制 | 说明 |
+|---|------|------|
+| 1 | 类型检查未做 | `min_choices` / `max_choices` / `min_length` / `max_length` / `min` / `max` 未检查 `typeof === 'number'`，传入字符串 `"5"` 可能被跳过或导致 NaN 比较。后续 F2 填写时可能暴露 |
+| 2 | Q1 未拒绝 order 字段 | 传了 `order` 会被静默忽略（push 时用 `questions.length` 覆盖）。建议检测到 order 也返回 400 |
+| 3 | 环检测属防御性代码 | 当前向前校验强制所有边 order 递增，规则图必然是 DAG，单测无法触发环检测。保留作为未来扩展（如允许 order 相等跳转）的兜底 |
+| 4 | condition.value 用 `=== undefined` 判断，不拦 null | 传 `value: null` 会通过校验。当前不影响 F2 逻辑（null 与任何值比较都不命中），但语义上应明确拒绝 |
+
+---
+
+> 下一个模块（填写端 F1 + F2 + F3）的日志接续追加到此文件。
