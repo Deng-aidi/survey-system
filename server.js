@@ -18,8 +18,8 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 
-// ── 健康检查（根路由）──
-app.get('/', (req, res) => {
+// ── 健康检查（挪到 /api 命名空间，避免与静态首页 / 冲突）──
+app.get('/api/health', (req, res) => {
   res.json({
     service: 'survey-backend',
     phase: '4',
@@ -34,6 +34,9 @@ app.use('/api/auth', authRoutes);
 // 填写端必须以 by-token 前缀挂载，且放在 /api/surveys 之前
 app.use('/api/surveys/by-token', fillRoutes);
 app.use('/api/surveys', surveyRoutes);
+
+// ── 静态前端（/api 路由之后、404 兜底之前）──
+app.use(express.static('public'));
 
 // ── 404 兜底 ──
 app.use((req, res) => {
