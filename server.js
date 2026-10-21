@@ -5,6 +5,10 @@ const cors = require('cors');
 const connectDB = require('./config/db');
 
 const authRoutes = require('./routes/auth');
+const surveyRoutes = require('./routes/surveys');
+
+// 提前注册 Submission model —— Survey.deleteOne 的 pre hook 要用到它
+require('./models/Submission');
 
 // ── 初始化 ──
 const app = express();
@@ -26,6 +30,7 @@ app.get('/', (req, res) => {
 
 // ── 路由注册 ──
 app.use('/api/auth', authRoutes);
+app.use('/api/surveys', surveyRoutes);
 
 // ── 404 兜底 ──
 app.use((req, res) => {
@@ -51,10 +56,14 @@ async function start() {
   await connectDB();
   app.listen(PORT, () => {
     console.log(`🚀 Server listening on http://localhost:${PORT}`);
-    console.log(`   Auth endpoints:`);
-    console.log(`   POST /api/auth/register`);
-    console.log(`   POST /api/auth/login`);
-    console.log(`   GET  /api/auth/me  (requires JWT)`);
+    console.log(`   Auth:  POST /api/auth/register | POST /api/auth/login | GET /api/auth/me`);
+    console.log(`   Survey CRUD:`);
+    console.log(`     POST   /api/surveys                    (create)`);
+    console.log(`     GET    /api/surveys                    (list)`);
+    console.log(`     GET    /api/surveys/:id                (detail)`);
+    console.log(`     PATCH  /api/surveys/:id                (update meta)`);
+    console.log(`     PATCH  /api/surveys/:id/status         (change status)`);
+    console.log(`     DELETE /api/surveys/:id                (delete + cascade submissions)`);
   });
 }
 
