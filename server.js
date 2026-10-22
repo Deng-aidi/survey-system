@@ -61,6 +61,8 @@ app.use((err, req, res, next) => {
 });
 
 // ── 启动 ──
+// 仅当直接运行 server.js 时才连接数据库并监听端口；
+// 测试中通过 require('../server') 复用 app 实例，由测试自行管理 DB 连接
 const PORT = process.env.PORT || 3000;
 
 async function start() {
@@ -78,7 +80,11 @@ async function start() {
   });
 }
 
-start().catch((err) => {
-  console.error('[startup-failed]', err);
-  process.exit(1);
-});
+if (require.main === module) {
+  start().catch((err) => {
+    console.error('[startup-failed]', err);
+    process.exit(1);
+  });
+}
+
+module.exports = app;

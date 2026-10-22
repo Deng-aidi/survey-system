@@ -37,7 +37,7 @@ npm run dev
 npm start
 ```
 
-### 访问地址（我在本地测试时使用的）
+### 访问地址
 
 | 路径 | 说明 |
 |---|---|
@@ -70,7 +70,7 @@ npm start
 │   └── Submission.js         # 提交记录，answers[] 含 question_type 冗余
 ├── routes/
 │   ├── auth.js               # register / login / me
-│   ├── surveys.js            # CRUD + Question + Stats（11 个端点）
+│   ├── surveys.js            # Survey CRUD + Question + Stats（10 个端点）
 │   └── fill.js               # by-token F1 / F2 / F3
 ├── utils/
 │   ├── jumpResolver.js       # condition_matches（6 种 operator）+ resolve_next_question
