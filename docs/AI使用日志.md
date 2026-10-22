@@ -65,10 +65,6 @@
 | T10 | 密码 6 位注册 | POST /api/auth/register | 201 | 201 | ✅ |
 | T11 | mongosh 查 users 集合 | `db.users.findOne({username:"bob"})` | password 已哈希 | `password: "$2a$10$bGZtXUYL..."`，bcrypt 哈希格式 | ✅ |
 
-**中途踩的坑（不是代码 bug）**：
-
-> 测试 4 第一次执行失败：我把 PowerShell 命令中的 `"Bearer 这里粘贴你的token"` 里的 `这里粘贴你的token` 当字面量传了，而不是先把 token 存进变量 `$TOKEN` 再引用。改用 `$TOKEN` 变量传递后通过。**根因是测试命令写法问题，不是后端代码问题。**
-
 ### 6. 我自己确认或补充的决策（AI 已实现，由我 review 时确认并固化为约束）
 
 | # | 决策 | 内容 | 理由 |
