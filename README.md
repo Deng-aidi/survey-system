@@ -2,7 +2,7 @@
 
 基于 **Node.js + Express + MongoDB** 构建的在线问卷系统，支持四种题型、可配置跳转、路径重放校验和零计数统计。
 
-## ✨ 核心功能
+##  核心功能
 
 - **四种题型**：单选、多选、文本、数字，每种题型有独立的校验规则（min/max/integer、min_choices/max_choices、min_length/max_length）
 - **可配置跳转**：每道题可以配置多条跳转规则，六种 operator（equals / includes / gte / lte / eq / between），支持跳到指定题或直接结束
@@ -11,7 +11,7 @@
 - **版本冲突检测**：乐观锁 `__v` 机制，填写期间问卷结构被修改会返回 409 要求刷新重填
 - **发布前校验**：状态 draft→open 时完整校验跳转规则（引用存在性 + 只允许向前 + DFS 环检测）
 
-## 🚀 本地运行
+##  本地运行
 
 ### 环境要求
 
@@ -52,7 +52,7 @@ npm start
 
 全部 78 条接口测试为手工执行，记录见 `docs/测试用例.md`。
 
-## 📁 目录结构
+##  目录结构
 
 ```
 ├── server.js                 # Express 入口
@@ -91,7 +91,7 @@ npm start
     └── AI使用日志.md
 ```
 
-## 🛠️ 技术栈
+##  技术栈
 
 | 层 | 技术 |
 |---|---|
@@ -103,7 +103,7 @@ npm start
 | 前端 | 原生 HTML + JS + fetch |
 | CSS | Pico.css（CDN） |
 
-## 📝 文档索引
+##  文档索引
 
 - **数据库设计**：[docs/数据库设计.md](docs/数据库设计.md) — 为什么选 MongoDB、集合划分、Schema 字段表、设计权衡（题目嵌入 / answers 冗余 question_type / answer Mixed 四种形态）、索引、已知限制
 - **关键逻辑**：[docs/关键逻辑说明.md](docs/关键逻辑说明.md) — 跳转六种 operator 语义、{matched, target} 设计选择、F3 重放路径二次校验（含完整例子）、空答案判定、创建者鉴权类型不对称问题、optionalAuth 三种状态
@@ -111,6 +111,6 @@ npm start
 - **测试用例**：[docs/测试用例.md](docs/测试用例.md) — 78 条接口测试汇总表 + 端到端联调记录
 - **AI 使用日志**：[docs/AI使用日志.md](docs/AI使用日志.md) — 各模块开发踩坑与 Read 验证策略
 
-## 📄 License
+##  License
 
 MIT
