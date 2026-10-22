@@ -4,45 +4,38 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>我的问卷</title>
-  <style>
-    body { font-family: sans-serif; max-width: 760px; margin: 24px auto; padding: 0 16px; }
-    header { display: flex; justify-content: space-between; align-items: center; }
-    form { display: flex; flex-direction: column; gap: 8px; margin: 16px 0; padding: 12px; border: 1px solid #ccc; }
-    input, textarea { padding: 6px; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-    .msg { min-height: 20px; margin: 8px 0; }
-    .msg.error { color: #c00; }
-    .msg.ok { color: #080; }
-    button { cursor: pointer; }
-    td button { margin-right: 6px; }
-  </style>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header>
-    <h1>我的问卷</h1>
-    <div>
-      <span id="who"></span>
-      <button id="btn-logout" type="button">退出登录</button>
-    </div>
-  </header>
+  <main class="container">
+    <header>
+      <h1>我的问卷</h1>
+      <div>
+        <span id="who"></span>
+        <button id="btn-logout" type="button" class="secondary outline">退出登录</button>
+      </div>
+    </header>
 
-  <h2>创建问卷</h2>
-  <form id="form-create">
-    <input id="c-title" type="text" placeholder="标题（必填）" required>
-    <textarea id="c-desc" placeholder="说明（可选）"></textarea>
-    <label><input id="c-anon" type="checkbox"> 允许匿名填写</label>
-    <button type="submit">创建</button>
-  </form>
+    <article class="create-card">
+      <h2>创建问卷</h2>
+      <form id="form-create">
+        <input id="c-title" type="text" placeholder="标题（必填）" required>
+        <textarea id="c-desc" placeholder="说明（可选）"></textarea>
+        <label><input id="c-anon" type="checkbox"> 允许匿名填写</label>
+        <button type="submit">创建</button>
+      </form>
+    </article>
 
-  <div id="msg" class="msg"></div>
+    <div id="msg" class="msg"></div>
 
-  <table>
-    <thead>
-      <tr><th>标题</th><th>状态</th><th>题目数</th><th>创建时间</th><th>操作</th></tr>
-    </thead>
-    <tbody id="survey-list"></tbody>
-  </table>
+    <table class="striped">
+      <thead>
+        <tr><th>标题</th><th>状态</th><th>题目数</th><th>创建时间</th><th>操作</th></tr>
+      </thead>
+      <tbody id="survey-list"></tbody>
+    </table>
+  </main>
 
   <script src="api.js"></script>
   <script src="surveys.js"></script>

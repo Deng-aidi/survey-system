@@ -49,10 +49,22 @@
     return survey.status === 'open';
   }
 
+  // ISO → datetime-local 输入框格式（YYYY-MM-DDTHH:mm），按本地时区取字段
+  // 不能用 toISOString()，那是 UTC，会差 8 小时
+  function isoToLocalInput(iso) {
+    if (!iso) return '';
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    var pad = function (n) { return String(n).padStart(2, '0'); };
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+      'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
   function render() {
     $('survey-info').style.display = '';
     $('e-title').textContent = survey.title;
     $('e-status').textContent = STATUS_LABEL[survey.status] || survey.status;
+    $('e-deadline').value = isoToLocalInput(survey.deadline);
     $('publish-errors').innerHTML = '';
 
     var readOnly = isReadOnly();
@@ -298,6 +310,19 @@
     addOptionRow();
     addOptionRow();
   }
+
+  // ── 保存设置（截止时间；open 状态也允许修改，便于提前结束）──
+  $('btn-save-settings').addEventListener('click', async function () {
+    var raw = $('e-deadline').value; // '' 或 'YYYY-MM-DDTHH:mm'（本地时间）
+    // new Date(raw) 按本地时区解析；空值传 null 清除截止时间
+    var deadline = raw === '' ? null : new Date(raw).toISOString();
+    try {
+      survey = await API.patch('/api/surveys/' + surveyId, { deadline: deadline });
+      showMsg('设置已保存');
+    } catch (err) {
+      showMsg(err.message || '保存失败', true);
+    }
+  });
 
   // ── 发布 ──
   $('btn-publish').addEventListener('click', async function () {

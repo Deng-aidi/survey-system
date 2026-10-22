@@ -4,40 +4,34 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>问卷系统 · 登录/注册</title>
-  <style>
-    body { font-family: sans-serif; max-width: 420px; margin: 40px auto; padding: 0 16px; }
-    .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
-    .tabs button { flex: 1; padding: 8px; cursor: pointer; }
-    .tabs button.active { font-weight: bold; border-bottom: 2px solid #333; }
-    form { display: flex; flex-direction: column; gap: 10px; }
-    input { padding: 8px; }
-    .hidden { display: none; }
-    .msg { margin-top: 12px; min-height: 20px; }
-    .msg.error { color: #c00; }
-    .msg.ok { color: #080; }
-  </style>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <h1>问卷系统</h1>
+  <main class="container auth-page">
+    <h1>问卷系统</h1>
 
-  <div class="tabs">
-    <button id="tab-login" class="active" type="button">登录</button>
-    <button id="tab-register" type="button">注册</button>
-  </div>
+    <article class="auth-card">
+      <div class="tabs">
+        <button id="tab-login" class="active" type="button">登录</button>
+        <button id="tab-register" type="button">注册</button>
+      </div>
 
-  <form id="form-login">
-    <input id="login-username" type="text" placeholder="用户名" required>
-    <input id="login-password" type="password" placeholder="密码" required>
-    <button type="submit">登录</button>
-  </form>
+      <form id="form-login">
+        <input id="login-username" type="text" placeholder="用户名" required>
+        <input id="login-password" type="password" placeholder="密码" required>
+        <button type="submit">登录</button>
+      </form>
 
-  <form id="form-register" class="hidden">
-    <input id="reg-username" type="text" placeholder="用户名" required>
-    <input id="reg-password" type="password" placeholder="密码" required>
-    <button type="submit">注册</button>
-  </form>
+      <form id="form-register" class="hidden">
+        <input id="reg-username" type="text" placeholder="用户名" required>
+        <input id="reg-password" type="password" placeholder="密码" required>
+        <button type="submit">注册</button>
+      </form>
 
-  <div id="msg" class="msg"></div>
+      <div id="msg" class="msg"></div>
+    </article>
+  </main>
 
   <script src="api.js"></script>
   <script src="index.js"></script>

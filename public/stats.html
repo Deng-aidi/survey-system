@@ -4,34 +4,22 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>问卷统计</title>
-  <style>
-    body { font-family: sans-serif; max-width: 760px; margin: 24px auto; padding: 0 16px; }
-    header { display: flex; justify-content: space-between; align-items: center; }
-    .msg { min-height: 20px; margin: 8px 0; }
-    .msg.error { color: #c00; }
-    .q-block { border: 1px solid #ddd; padding: 12px; margin: 12px 0; }
-    .q-block h3 { margin: 0 0 8px; }
-    .opt-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
-    .opt-label { flex: 0 0 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .bar-wrap { flex: 1; background: #eee; height: 16px; position: relative; }
-    .bar { height: 100%; background: #4a90d9; }
-    .opt-count { flex: 0 0 60px; text-align: right; font-variant-numeric: tabular-nums; }
-    .values { margin: 8px 0; padding-left: 20px; }
-    .values li { margin: 4px 0; word-break: break-all; }
-    .meta { color: #666; font-size: 13px; }
-  </style>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header>
-    <h1 id="survey-title">问卷统计</h1>
-    <a href="surveys.html">返回列表</a>
-  </header>
+  <main class="container">
+    <header>
+      <h1 id="survey-title">问卷统计</h1>
+      <a href="surveys.html">返回列表</a>
+    </header>
 
-  <div id="msg" class="msg"></div>
+    <div id="msg" class="msg"></div>
 
-  <p class="meta">总提交数：<strong id="total-submissions">-</strong></p>
+    <p class="meta">总提交数：<strong id="total-submissions">-</strong></p>
 
-  <div id="stats-body"></div>
+    <div id="stats-body"></div>
+  </main>
 
   <script src="api.js"></script>
   <script src="stats.js"></script>

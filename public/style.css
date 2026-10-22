@@ -1,0 +1,117 @@
+/* 全站定制样式：Pico.css 之后的补充与覆盖，仅控制视觉，不承载业务逻辑 */
+
+/* ── 通用 ── */
+main > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+main > header h1 { margin: 0; }
+
+.msg { min-height: 1.2em; margin: 0.5rem 0; }
+.msg.error { color: #dc2626; }
+.msg.ok { color: #16a34a; }
+.hidden { display: none !important; } /* index.js 用它切换登录/注册表单 */
+
+/* ── 登录/注册页：居中窄卡片 ── */
+.auth-page { max-width: 400px; margin-top: 8vh; }
+.auth-page h1 { text-align: center; }
+.tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+.tabs button { flex: 1; }
+.tabs button:not(.active) {
+  background: transparent;
+  color: var(--pico-primary);
+  border-color: var(--pico-primary);
+}
+
+/* ── 列表页：斑马纹表格 + 卡片表单 ── */
+table { border-collapse: collapse; }
+table th, table td {
+  border: none;
+  border-bottom: 1px solid var(--pico-muted-border-color, #e5e7eb);
+  padding: 0.6rem 0.8rem;
+  text-align: left;
+}
+table tbody tr:nth-child(odd) { background: rgba(0, 0, 0, 0.03); }
+td button { margin-right: 0.4rem; }
+#form-create { display: flex; flex-direction: column; gap: 0.5rem; }
+
+/* ── 编辑页：题目卡片（微阴影）── */
+.q-card {
+  background: var(--pico-card-background-color, #fff);
+  border: 1px solid var(--pico-muted-border-color, #e5e7eb);
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+  padding: 1rem 1.25rem;
+  margin: 1rem 0;
+}
+.q-card h3 { margin: 0 0 0.4rem; font-size: 1.05rem; }
+.q-meta, .q-options { color: var(--pico-muted-color, #6b7280); font-size: 0.85rem; margin-bottom: 0.3rem; }
+.jump-rules { font-size: 0.85rem; margin: 0.5rem 0; padding-left: 1.2rem; }
+/* .jump-form 的 display 由 edit.js 内联切换（none/flex），这里只设视觉属性 */
+.jump-form {
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+  padding: 0.75rem;
+  background: var(--pico-background-color, #f9fafb);
+  border-radius: 8px;
+}
+.option-row { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.4rem; }
+.option-row input { flex: 1; }
+.errors-list { color: #dc2626; padding-left: 1.2rem; }
+#readonly-tip { color: #b45309; }
+#form-add { display: flex; flex-direction: column; gap: 0.5rem; }
+
+/* ── 填写页 / 统计页共用：题目区块卡片 ── */
+.q-block {
+  background: var(--pico-card-background-color, #fff);
+  border: 1px solid var(--pico-muted-border-color, #e5e7eb);
+  border-radius: 10px;
+  padding: 1.25rem;
+  margin: 1rem 0;
+}
+
+/* 填写页：选项做成大区块，方便点击；悬停与选中都有明显反馈 */
+.q-block label {
+  display: block;
+  padding: 0.9rem 1rem;
+  margin: 0.5rem 0;
+  border: 1px solid var(--pico-muted-border-color, #d1d5db);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.q-block label:hover {
+  border-color: var(--pico-primary);
+  background: var(--pico-primary-focus);
+}
+.q-block label:has(input:checked) {
+  border-color: var(--pico-primary);
+  background: var(--pico-primary-focus);
+  font-weight: 600;
+}
+.q-block textarea, .q-block input[type="number"] { width: 100%; box-sizing: border-box; }
+.q-block textarea { min-height: 80px; }
+.actions { margin-top: 1rem; }
+#view-success { text-align: center; padding: 2rem 1rem; }
+.hint { color: var(--pico-muted-color, #6b7280); font-size: 0.85rem; }
+
+/* ── 统计页：绿色进度条，无边框 ── */
+.opt-row { display: flex; align-items: center; gap: 0.6rem; margin: 0.4rem 0; }
+.opt-label { flex: 0 0 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar-wrap {
+  flex: 1;
+  background: #e5e7eb;
+  height: 14px;
+  border: none;
+  border-radius: 999px;
+  overflow: hidden;
+}
+.bar { height: 100%; background: #10b981; border: none; border-radius: 999px; }
+.opt-count { flex: 0 0 56px; text-align: right; font-variant-numeric: tabular-nums; }
+.values { margin: 0.5rem 0; padding-left: 1.2rem; }
+.values li { margin: 0.25rem 0; word-break: break-all; }
+.meta { color: var(--pico-muted-color, #6b7280); font-size: 0.85rem; }
