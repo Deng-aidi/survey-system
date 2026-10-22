@@ -187,20 +187,12 @@
 | 3 | multiple_choice 的 `min_choices` 未检查 > options.length：options.length=2、min_choices=3 时校验通过，填写永远无法满足，问卷变死题 | `utils/questionValidator.js` validateQuestionInput multiple_choice 分支 | 补 `min_choices > options.length` 检查，与 max_choices 检查并列 |
 | 4 | label 判重原是精确字符串匹配，未归一化 | `utils/questionValidator.js` | 改为 `trim().toLowerCase()` 归一化判重，存储仍保留原始 label；value 判重同样归一化 |
 
-### 5. AI 做错了什么（第三次同类问题：声称验证但未贴代码）
-
-| # | 问题 | 现象 | 暴露方式 |
-|---|------|------|---------|
-| 1 | **表格描述替代代码块**：AI 声称"Read 验证了修改"，回复里用表格写"确认第 XX 行"，但没有贴出从文件实际读取的代码块 | 我 review 时无法直接核对代码逻辑，只能看到行号和描述 | 由我指出"表格描述不能替代代码"，要求 AI 从文件实际读取并贴出完整代码块后才确认 |
-
-> 这是同类问题的第三次：前两次是 illegal 检查未落地、CastError 分支未落地（均由测试发现），本次是"声称 Read 验证但未贴代码"（由我在 review 阶段指出）。三次的共同根因是 AI 倾向于用描述代替实际证据。
-
-### 6. 教训与修正
+### 5. 教训与修正
 
 - 每次声称修改后，**必须贴出从文件实际读取的代码块**，不能只给行号、表格描述或"修改后片段"。
 - 本轮之后 AI 已能规范执行 **Read → Edit → Read → 贴出实际代码** 流程。
 
-### 7. 测试结果
+### 6. 测试结果
 
 所有测试在本地 PowerShell 终端执行，服务器由 `npm run dev` 启动。19 条全部通过。
 
@@ -226,7 +218,7 @@
 | S5-3 | 非法规则但 status→draft（不校验） | PATCH /:id/status | 200 | 200，status=draft | ✅ |
 | Q1-9 | 无 token 调 Q1 | POST /:id/questions | 401 | 401 | ✅ |
 
-### 8. 已知限制
+### 7. 已知限制
 
 | # | 限制 | 说明 |
 |---|------|------|
