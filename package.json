@@ -1,7 +1,7 @@
 {
   "name": "survey-backend",
   "version": "0.1.0",
-  "description": "MongoDB survey system — Phase 4: auth module only",
+  "description": "基于 MongoDB 的在线问卷系统",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

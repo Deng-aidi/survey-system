@@ -35,7 +35,12 @@ app.use('/api/auth', authRoutes);
 app.use('/api/surveys/by-token', fillRoutes);
 app.use('/api/surveys', surveyRoutes);
 
-// ── 静态前端（/api 路由之后、404 兜底之前）──
+// ── 需求兼容：/survey/:token 重定向到填写页（需求文档示例路径）──
+app.get('/survey/:token', (req, res) => {
+  res.redirect(`/fill.html?token=${req.params.token}`);
+});
+
+// ── 静态前端（/api 路由之后、自定义重定向之后、404 兜底之前）──
 app.use(express.static('public'));
 
 // ── 404 兜底 ──
