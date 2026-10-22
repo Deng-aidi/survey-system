@@ -417,4 +417,66 @@ F3：
 
 ---
 
-> 下一个模块（前端页面）的日志接续追加到此文件。
+## 前端模块（5 个页面 + 静态托管 + 统一封装 + 样式美化 + 截止时间）
+
+### 1. 使用工具
+
+- Trae（AI 编程工具，对话式 Agent）
+- 本地浏览器 Chrome（端到端联调）
+- 人工执行 git 命令
+
+### 2. 提示词摘要
+
+分两批开发纯 HTML + 原生 JS + fetch 页面，复用统一封装 api.js，不引入任何 UI 框架。第一批完成登录注册 + 问卷列表（6 个验收点），通过后第二批做编辑 + 填写 + 统计 3 个页面。最后进行 Pico.css CDN 样式美化与截止时间补充。严格要求"每次修改后 Read 验证并贴出文件实际代码"，不复述代码片段。
+
+### 3. AI 产出
+
+| 文件 | 内容 |
+|------|------|
+| `server.js` | 健康检查改为 `/api/health`；加 `app.use(express.static('public'))` 置于 `/api` 路由之后、404 之前 |
+| `public/api.js` | 统一 fetch 封装：自动带 Bearer Token，401 清 token 跳 index.html；提供 get/post/patch/del 便捷方法；**追加 skip401Redirect 参数**用于填写端 |
+| `public/index.html` + `index.js` | 登录/注册双 Tab 切换，成功存 localStorage 跳 surveys.html |
+| `public/surveys.html` + `surveys.js` | 问卷列表 + 创建表单 + 编辑/统计/复制链接三按钮 |
+| `public/edit.html` + `edit.js` | 问卷编辑器：动态题型字段、选项行增删、跳转规则配置、发布前 422 逐条展示、open 只读 |
+| `public/fill.html` + `fill.js` | 填写页：F1/F2/F3 全流程、依赖后端 next_question_id 前进、answer 形态四种 |
+| `public/stats.html` + `stats.js` | 统计页：choice 横向条 / number avg/min/max / text 列表 |
+| `public/style.css` | Pico.css 覆盖样式：登录页 400px 卡片、列表斑马纹、题目卡片微阴影、填写页大区块选项、统计页绿色 #10b981 进度条 |
+
+### 4. AI 做错了什么（4 个真实踩坑）
+
+| # | 问题 | 现象 | 暴露方式 |
+|---|------|------|---------|
+| 1 | **白屏 Bug** | fill.html 把 `<div id="view-success">` 嵌套在了 `<div id="view-survey">` 内部，JS 切换视图隐藏父节点时连带着成功页也看不见 | 浏览器端到端联调：F3 返回 201 后页面一片空白 |
+| 2 | **空答案污染统计** | fill.js 最初 F2 校验通过后无条件 `answers.push`，非必答题留空时存入 null/空数组；后端落库后 answer_count 虚高，单选题出现 null 分组 | 检查统计逻辑时发现 |
+| 3 | **语法低级错误** | edit.js 初始生成时有 3 处中文字符串拼接漏写引号（`+ 题：' +` 应为 `+ ' 题：' +`） | `node --check` 当场暴露 |
+| 4 | **401 鉴权冲突** | api.js 默认遇 401 清 token 跳登录页，但填写端 F1 的 401 是业务态（"该问卷仅限登录用户填写"），直接跳转打断填写流程 | 设计前端交互时发现 |
+
+### 5. 我的修改与决策
+
+| # | 决策 | 内容 | 理由 |
+|---|------|------|------|
+| 1 | 修复白屏 | 将 `view-success` 移出 `view-survey`，改为平级节点 | JS `showView('view-success')` 不再被父节点 display:none 连带隐藏；不动 JS 逻辑，只改 HTML 结构 |
+| 2 | 修复统计污染 | 在 fill.js 加 `isAnswerEmpty` 函数，F2 校验通过后只有非空答案才 push；空答案只前进不记录 | required 题空答案在 F2 就 `valid=false` 不会走到 push，逻辑不受影响；F3 重放时这道题不在 answer_map 里，按"非必答跳过"处理 |
+| 3 | 解决 401 冲突 | 给 api.js 的 request/get/post/patch/del 增加可选 `extra` 参数，支持 `{ skip401Redirect: true }` 时 401 只抛错不跳转 | 保持单一封装，edit/stats 不传该参数、行为不变；fill 页传入，由页面自行渲染"请先登录"提示 + 登录链接 |
+| 4 | 时区处理 | datetime-local 回显不能用 `toISOString()`（UTC 差 8 小时），必须手动按本地时区逐字段拼接 `YYYY-MM-DDTHH:mm`；保存时 `new Date(raw).toISOString()` 按本地解析再转 UTC | 往返一致，避免创建者在 UTC 时区看到的时间比实际晚 8 小时 |
+
+### 6. 教训与修正
+
+- AI 生成 HTML 嵌套结构时**不做语义检查**，容易出现父子视图互相遮挡这类结构性 Bug，必须在浏览器端到端联调才能发现。
+- fill.js 的空答案污染问题**跨越了前端和后端模块边界**：前端的 push 逻辑影响后端的统计结果。AI 在"前端模块"上下文内不会主动思考"这会影响 Stats 模块"，需要跨模块视角。
+- 401 冲突是**两种完全不同的业务语义共用同一个 HTTP 状态码**的典型陷阱：管理侧 401 = 登录失效；填写侧 401 = 该问卷需要登录才能填。不能用统一的 401→跳转处理，必须有差异化逻辑。
+
+### 7. 验收结果
+
+浏览器端完成完整闭环（注册 → 建题 → 配跳转 → 发布 → 填写 → 统计），6 个核心验证点全部通过：
+
+| # | 验证点 | 结果 |
+|---|---|:----:|
+| 1 | http://localhost:3000/ 打开登录页 | ✅ |
+| 2 | 注册新用户 → 登录 → 跳 surveys.html | ✅ |
+| 3 | 创建一条问卷 → 列表出现 | ✅ |
+| 4 | 刷新页面 token 仍在，不用重新登录 | ✅ |
+| 5 | 点"复制链接"能拿到 /fill.html?token=xxx | ✅ |
+| 6 | 退出登录后访问 surveys.html 自动跳回登录页 | ✅ |
+
+修复白屏、空答案污染、401 冲突后，填写页 F3 返回 201 时成功页面正常显示 submission_id；统计页零计数选项完整保留。
