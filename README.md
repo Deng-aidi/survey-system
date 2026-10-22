@@ -68,9 +68,10 @@ npm test
 
 ##  目录结构
 
-```
+```text
 ├── server.js                 # Express 入口
 ├── package.json
+├── package-lock.json
 ├── .env.example
 ├── config/
 │   └── db.js                 # Mongoose 连接封装
@@ -97,7 +98,9 @@ npm test
 │   ├── stats.html/js         # 统计页（choice 横向条 / number avg / text 列表）
 │   ├── api.js                # 统一 fetch 封装（自动带 JWT + 401 跳登录）
 │   └── style.css             # 自定义样式（Pico.css 覆盖）
-└── docs/                     # 四份设计与测试文档
+├── tests/                    # 自动化测试目录
+│   └── api.test.js           # Jest + Supertest 集成测试
+└── docs/                     # 核心设计与测试文档
     ├── 数据库设计.md
     ├── 关键逻辑说明.md
     ├── API说明.md
