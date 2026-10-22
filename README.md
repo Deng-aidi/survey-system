@@ -35,6 +35,10 @@ cp .env.example .env
 npm run dev
 # 生产环境
 npm start
+
+# 5.运行测试用例
+npm test
+
 ```
 
 ### 访问地址
