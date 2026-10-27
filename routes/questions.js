@@ -16,6 +16,7 @@ const mongoose = require('mongoose');
 
 const Question = require('../models/Question');
 const Survey = require('../models/Survey');
+const Submission = require('../models/Submission');
 const authenticate = require('../middleware/auth');
 const { validateQuestionInput } = require('../utils/questionValidator');
 
@@ -504,6 +505,219 @@ router.get('/:questionId/usages', authenticate, async (req, res) => {
     res.status(200).json(usages);
   } catch (err) {
     console.error('[questions usages GET]', err);
+    res.status(500).json({ code: 'INTERNAL_ERROR', message: '服务器内部错误' });
+  }
+});
+
+// ─────────────────────────────────────────────────────
+// 11. GET /api/questions/:questionId/stats —— 跨问卷统计（仅创建者）
+//     ?includeVersions=true 时按整个版本链统计，并额外给出 by_version
+//     ?limit=N 限制 number / text 的 all_values 长度（默认 100）
+// ─────────────────────────────────────────────────────
+
+// 去重后保留 ObjectId 实例
+function uniqueObjectIds(ids) {
+  return [...new Map(ids.map((id) => [id.toString(), id])).values()];
+}
+
+// 无引用时的空统计结构：按题型给出稳定的字段形状
+function emptyAggregate(type, options) {
+  if (type === 'single_choice' || type === 'multiple_choice') {
+    return {
+      answer_count: 0,
+      option_counts: (options || []).map((o) => ({
+        option_value: o.value,
+        option_label: o.label,
+        count: 0,
+      })),
+    };
+  }
+  if (type === 'number') {
+    return {
+      answer_count: 0,
+      stats: { avg: null, min: null, max: null },
+      all_values: [],
+    };
+  }
+  return { answer_count: 0, all_values: [] };
+}
+
+/**
+ * 对一组 (survey, 本地题) 映射做答案聚合。
+ * mappings：[{ survey_id, local_question_id }]
+ */
+async function aggregateAnswers({ type, options, mappings, limit }) {
+  if (mappings.length === 0) return emptyAggregate(type, options);
+
+  const surveyIds = uniqueObjectIds(mappings.map((m) => m.survey_id));
+  const localIds = uniqueObjectIds(mappings.map((m) => m.local_question_id));
+
+  const matchStage = {
+    survey_id: { $in: surveyIds },
+    'answers.question_id': { $in: localIds },
+  };
+
+  // 作答次数按 submission 计（多选不会因为选了多个值而重复计数）
+  const answer_count = await Submission.countDocuments(matchStage);
+
+  if (type === 'single_choice' || type === 'multiple_choice') {
+    const pipeline = [
+      { $match: matchStage },
+      { $unwind: '$answers' },
+      { $match: { 'answers.question_id': { $in: localIds } } },
+    ];
+    // 多选：answer 是数组，再展开一次，每个选中值算一票
+    if (type === 'multiple_choice') {
+      pipeline.push({ $unwind: '$answers.answer' });
+    }
+    pipeline.push({ $group: { _id: '$answers.answer', count: { $sum: 1 } } });
+
+    const agg = await Submission.aggregate(pipeline);
+    const countMap = new Map(agg.map((r) => [String(r._id), r.count]));
+
+    return {
+      answer_count,
+      option_counts: (options || []).map((o) => ({
+        option_value: o.value,
+        option_label: o.label,
+        count: countMap.get(o.value) || 0,
+      })),
+    };
+  }
+
+  if (type === 'number') {
+    const [agg] = await Submission.aggregate([
+      { $match: matchStage },
+      { $unwind: '$answers' },
+      { $match: { 'answers.question_id': { $in: localIds } } },
+      {
+        $group: {
+          _id: null,
+          avg: { $avg: '$answers.answer' },
+          min: { $min: '$answers.answer' },
+          max: { $max: '$answers.answer' },
+          values: { $push: '$answers.answer' },
+        },
+      },
+    ]);
+
+    return {
+      answer_count,
+      stats: agg
+        ? { avg: agg.avg, min: agg.min, max: agg.max }
+        : { avg: null, min: null, max: null },
+      all_values: agg ? agg.values.slice(0, limit) : [],
+    };
+  }
+
+  // text：收集原文
+  const [agg] = await Submission.aggregate([
+    { $match: matchStage },
+    { $unwind: '$answers' },
+    { $match: { 'answers.question_id': { $in: localIds } } },
+    { $group: { _id: null, values: { $push: '$answers.answer' } } },
+  ]);
+
+  return {
+    answer_count,
+    all_values: agg ? agg.values.slice(0, limit) : [],
+  };
+}
+
+router.get('/:questionId/stats', authenticate, async (req, res) => {
+  try {
+    const doc = await findQuestion(req, res);
+    if (!doc) return;
+
+    if (!isOwner(doc, req.user._id)) {
+      return res.status(403).json({ code: 'FORBIDDEN', message: '只有创建者可以查看题目统计' });
+    }
+
+    let limit = 100;
+    if (req.query.limit !== undefined) {
+      const n = Number(req.query.limit);
+      if (!Number.isInteger(n) || n < 0) {
+        return res.status(400).json({ code: 'MALFORMED_REQUEST', message: 'limit 必须是非负整数' });
+      }
+      limit = n;
+    }
+
+    const includeVersions = req.query.includeVersions === 'true';
+
+    // 版本范围：默认当前版本；includeVersions 取整条版本链
+    const chain = includeVersions
+      ? await Question.find({ root_id: doc.root_id }).sort({ version: 1 })
+      : [doc];
+
+    const included_versions = chain.map((v) => v.version);
+    const versionIds = chain.map((v) => v._id);
+    const versionIdSet = new Set(versionIds.map((id) => id.toString()));
+
+    // 反查引用这些版本的问卷，收集 (问卷, 本地题) 映射
+    const surveys = await Survey.find(
+      { 'questions.source_question_id': { $in: versionIds } },
+      { title: 1, questions: 1 }
+    );
+
+    const mappings = [];
+    for (const survey of surveys) {
+      for (const q of survey.questions) {
+        if (q.source_question_id && versionIdSet.has(q.source_question_id.toString())) {
+          mappings.push({
+            survey_id: survey._id,
+            survey_title: survey.title,
+            local_question_id: q._id,
+            source_version: q.source_version,
+          });
+        }
+      }
+    }
+
+    // 每份问卷（每个快照）各自的作答量
+    const surveyEntries = await Promise.all(
+      mappings.map(async (m) => ({
+        survey_id: m.survey_id,
+        title: m.survey_title,
+        source_version: m.source_version,
+        answer_count: await Submission.countDocuments({
+          survey_id: m.survey_id,
+          'answers.question_id': m.local_question_id,
+        }),
+      }))
+    );
+
+    // 总体汇总
+    const aggregate = await aggregateAnswers({
+      type: doc.type,
+      options: doc.options,
+      mappings,
+      limit,
+    });
+
+    // 多版本：按版本分别统计，相同 value 不跨版本求和（版本间语义可能漂移）
+    if (includeVersions && chain.length > 1) {
+      aggregate.by_version = await Promise.all(
+        chain.map(async (v) => ({
+          version: v.version,
+          aggregate: await aggregateAnswers({
+            type: v.type,
+            options: v.options,
+            mappings: mappings.filter((m) => m.source_version === v.version),
+            limit,
+          }),
+        }))
+      );
+    }
+
+    res.status(200).json({
+      question_id: doc._id,
+      root_id: doc.root_id,
+      included_versions,
+      surveys: surveyEntries,
+      aggregate,
+    });
+  } catch (err) {
+    console.error('[questions stats GET]', err);
     res.status(500).json({ code: 'INTERNAL_ERROR', message: '服务器内部错误' });
   }
 });
