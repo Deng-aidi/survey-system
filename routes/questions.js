@@ -15,6 +15,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 
 const Question = require('../models/Question');
+const Survey = require('../models/Survey');
 const authenticate = require('../middleware/auth');
 const { validateQuestionInput } = require('../utils/questionValidator');
 
@@ -186,6 +187,30 @@ router.get('/', authenticate, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────
+// 8. GET /api/questions/shared —— 他人共享给我的 + 全站公开的
+//    必须注册在 GET /:questionId 之前，避免 "shared" 被当成 id
+// ─────────────────────────────────────────────────────
+router.get('/shared', authenticate, async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    const items = await Question.find({
+      _id: { $ne: userId },              // 排除自己创建的（自己的题在 GET / 里）
+      archived_at: null,
+      $or: [
+        { is_shared: true },
+        { shared_with: userId },
+      ],
+    }).sort({ updated_at: -1 }).limit(200);
+
+    res.status(200).json(items);
+  } catch (err) {
+    console.error('[questions shared GET]', err);
+    res.status(500).json({ code: 'INTERNAL_ERROR', message: '服务器内部错误' });
+  }
+});
+
+// ─────────────────────────────────────────────────────
 // 3. GET /api/questions/:questionId —— 详情
 // ─────────────────────────────────────────────────────
 router.get('/:questionId', authenticate, async (req, res) => {
@@ -284,6 +309,75 @@ router.patch('/:questionId', authenticate, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────
+// 9. PATCH /api/questions/:questionId/sharing —— 共享设置（仅创建者）
+//    is_shared：公开给所有登录用户
+//    shared_with：定向共享（只授予读 + 使用，不授予编辑权）
+// ─────────────────────────────────────────────────────
+router.patch('/:questionId/sharing', authenticate, async (req, res) => {
+  try {
+    const doc = await findQuestion(req, res);
+    if (!doc) return;
+
+    if (!isOwner(doc, req.user._id)) {
+      return res.status(403).json({ code: 'FORBIDDEN', message: '只有创建者可以修改共享设置' });
+    }
+
+    const allowedFields = ['is_shared', 'shared_with'];
+    const illegal = Object.keys(req.body).filter((k) => !allowedFields.includes(k));
+    if (illegal.length > 0) {
+      return res.status(400).json({
+        code: 'MALFORMED_REQUEST',
+        message: `共享设置仅接受 ${allowedFields.join(' / ')}，不允许：${illegal.join(', ')}`,
+      });
+    }
+
+    if (req.body.is_shared === undefined && req.body.shared_with === undefined) {
+      return res.status(400).json({
+        code: 'MALFORMED_REQUEST',
+        message: `共享设置至少提供 ${allowedFields.join(' / ')} 之一`,
+      });
+    }
+
+    if (req.body.is_shared !== undefined) {
+      if (typeof req.body.is_shared !== 'boolean') {
+        return res.status(400).json({ code: 'MALFORMED_REQUEST', message: 'is_shared 必须是布尔值' });
+      }
+      doc.is_shared = req.body.is_shared;
+    }
+
+    if (req.body.shared_with !== undefined) {
+      const { shared_with } = req.body;
+      if (!Array.isArray(shared_with)) {
+        return res.status(400).json({ code: 'MALFORMED_REQUEST', message: 'shared_with 必须是用户 id 数组' });
+      }
+      const invalid = shared_with.filter((id) => !mongoose.isValidObjectId(id));
+      if (invalid.length > 0) {
+        return res.status(400).json({
+          code: 'MALFORMED_REQUEST',
+          message: `shared_with 含非法用户 id：${invalid.join(', ')}`,
+        });
+      }
+
+      // 去重后写入；不允许共享给自己
+      const ids = [...new Set(shared_with.map((id) => id.toString()))];
+      if (ids.includes(req.user._id.toString())) {
+        return res.status(400).json({
+          code: 'MALFORMED_REQUEST',
+          message: 'shared_with 不允许包含自己',
+        });
+      }
+      doc.shared_with = ids;
+    }
+
+    await doc.save();
+    res.status(200).json(doc);
+  } catch (err) {
+    console.error('[questions sharing PATCH]', err);
+    res.status(500).json({ code: 'INTERNAL_ERROR', message: '服务器内部错误' });
+  }
+});
+
+// ─────────────────────────────────────────────────────
 // 5. POST /api/questions/:questionId/versions —— 生成新版本
 // ─────────────────────────────────────────────────────
 router.post('/:questionId/versions', authenticate, async (req, res) => {
@@ -367,6 +461,49 @@ router.post('/:questionId/restore', authenticate, async (req, res) => {
       return res.status(409).json({ code: err.code, message: err.message });
     }
     console.error('[questions restore POST]', err);
+    res.status(500).json({ code: 'INTERNAL_ERROR', message: '服务器内部错误' });
+  }
+});
+
+// ─────────────────────────────────────────────────────
+// 10. GET /api/questions/:questionId/usages —— 引用追踪（仅创建者）
+//     找出 surveys.questions 中 source_question_id 指向该题的内嵌快照
+// ─────────────────────────────────────────────────────
+router.get('/:questionId/usages', authenticate, async (req, res) => {
+  try {
+    const doc = await findQuestion(req, res);
+    if (!doc) return;
+
+    if (!isOwner(doc, req.user._id)) {
+      return res.status(403).json({ code: 'FORBIDDEN', message: '只有创建者可以查看引用情况' });
+    }
+
+    // 内嵌数组匹配 + $elemMatch 只投影命中的那一道题
+    const surveys = await Survey.find(
+      { 'questions.source_question_id': doc._id },
+      {
+        title: 1,
+        status: 1,
+        questions: { $elemMatch: { source_question_id: doc._id } },
+      }
+    );
+
+    const usages = surveys.map((survey) => {
+      const hit = survey.questions.find(
+        (q) => q.source_question_id && q.source_question_id.equals(doc._id)
+      );
+      return {
+        survey_id: survey._id,
+        title: survey.title,
+        status: survey.status,
+        source_version: hit ? hit.source_version : null,
+        local_question_id: hit ? hit._id : null,
+      };
+    });
+
+    res.status(200).json(usages);
+  } catch (err) {
+    console.error('[questions usages GET]', err);
     res.status(500).json({ code: 'INTERNAL_ERROR', message: '服务器内部错误' });
   }
 });
