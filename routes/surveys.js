@@ -2,8 +2,10 @@ const express = require('express');
 const mongoose = require('mongoose');
 const Survey = require('../models/Survey');
 const Submission = require('../models/Submission');
+const Question = require('../models/Question');
 const authenticate = require('../middleware/auth');
 const requireSurveyOwner = require('../middleware/ownership');
+const structureLock = require('../middleware/structureLock');
 const {
   validateQuestionInput,
   validateJumpRulesExist,
@@ -325,9 +327,18 @@ router.patch('/:surveyId/status', authenticate, requireSurveyOwner, async (req, 
     }
 
     req.survey.status = status;
+    // 首次发布：记录发布时间，作为结构锁定标志（只写不清）
+    if (status === 'open' && !req.survey.published_at) {
+      req.survey.published_at = new Date();
+    }
     await req.survey.save();   // save() 保证 __v 递增
 
-    res.status(200).json({ _id: req.survey._id, status: req.survey.status, updated_at: req.survey.updated_at });
+    res.status(200).json({
+      _id: req.survey._id,
+      status: req.survey.status,
+      published_at: req.survey.published_at,
+      updated_at: req.survey.updated_at,
+    });
   } catch (err) {
     console.error('[surveys PATCH status]', err);
     res.status(500).json({ code: 'INTERNAL_ERROR', message: '服务器内部错误' });
@@ -355,7 +366,7 @@ router.delete('/:surveyId', authenticate, requireSurveyOwner, async (req, res) =
 // POST /api/surveys/:surveyId/questions
 // 不接受 jump_rules 字段（传了直接 400）
 // ─────────────────────────────────────────────────────
-router.post('/:surveyId/questions', authenticate, requireSurveyOwner, async (req, res) => {
+router.post('/:surveyId/questions', authenticate, requireSurveyOwner, structureLock, async (req, res) => {
   try {
     // Q1 不接受 jump_rules 字段
     if (req.body.jump_rules !== undefined) {
@@ -405,11 +416,90 @@ router.post('/:surveyId/questions', authenticate, requireSurveyOwner, async (req
 });
 
 // ─────────────────────────────────────────────────────
+// Q3（第二阶段）：从题库加入题目 —— 生成快照
+// POST /api/surveys/:surveyId/questions/from-library
+// jump_rules 属于问卷上下文，强制为空，需另行调用 Q2 配置
+// ─────────────────────────────────────────────────────
+router.post('/:surveyId/questions/from-library', authenticate, requireSurveyOwner, structureLock, async (req, res) => {
+  try {
+    const allowedFields = ['question_id', 'required', 'order'];
+    const illegal = Object.keys(req.body).filter((k) => !allowedFields.includes(k));
+    if (illegal.length > 0) {
+      return res.status(400).json({
+        code: 'MALFORMED_REQUEST',
+        message: `从题库加题仅接受 ${allowedFields.join(' / ')}，不允许：${illegal.join(', ')}`,
+      });
+    }
+
+    const { question_id, required, order } = req.body;
+
+    if (!mongoose.isValidObjectId(question_id)) {
+      return res.status(404).json({ code: 'QUESTION_NOT_FOUND', message: '题目不存在' });
+    }
+    if (required !== undefined && typeof required !== 'boolean') {
+      return res.status(400).json({ code: 'MALFORMED_REQUEST', message: 'required 必须是布尔值' });
+    }
+    if (order !== undefined && (!Number.isInteger(order) || order < 0)) {
+      return res.status(400).json({ code: 'MALFORMED_REQUEST', message: 'order 必须是非负整数' });
+    }
+
+    const source = await Question.findById(question_id);
+    if (!source) {
+      return res.status(404).json({ code: 'QUESTION_NOT_FOUND', message: '题目不存在' });
+    }
+
+    // 读权限：创建者 ∪ 公开共享 ∪ 定向共享
+    const userId = req.user._id;
+    const canRead =
+      source.creator_id.toString() === userId.toString() ||
+      source.is_shared ||
+      (source.shared_with || []).some((id) => id.toString() === userId.toString());
+
+    if (!canRead) {
+      return res.status(403).json({ code: 'QUESTION_NOT_ACCESSIBLE', message: '无权使用该题目' });
+    }
+
+    // 深拷贝题面：value 原样保留（统计口径依赖它），选项 _id 重新生成
+    const copiedOptions = (source.options || []).map((o) => ({
+      _id: new mongoose.Types.ObjectId(),
+      label: o.label,
+      value: o.value,
+    }));
+
+    req.survey.questions.push({
+      _id: new mongoose.Types.ObjectId(),   // 本地新 _id，与题库题的 _id 不同
+      type: source.type,
+      title: source.title,
+      order: order !== undefined ? order : req.survey.questions.length,
+      required: required ?? false,
+      options: copiedOptions,
+      validation: source.validation || {},
+      jump_rules: [],
+      source_question_id: source._id,
+      source_version: source.version,
+      snapshot_at: new Date(),
+    });
+
+    await req.survey.save();
+    res.status(201).json(req.survey);
+  } catch (err) {
+    if (err.name === 'ValidationError') {
+      return res.status(400).json({
+        code: 'VALIDATION_ERROR',
+        message: Object.values(err.errors).map((e) => e.message).join('; '),
+      });
+    }
+    console.error('[questions from-library POST]', err);
+    res.status(500).json({ code: 'INTERNAL_ERROR', message: '服务器内部错误' });
+  }
+});
+
+// ─────────────────────────────────────────────────────
 // Q2：仅修改 jump_rules
 // PATCH /api/surveys/:surveyId/questions/:questionId/jump_rules
 // 不允许改题干/选项/type/required/validation/order
 // ─────────────────────────────────────────────────────
-router.patch('/:surveyId/questions/:questionId/jump_rules', authenticate, requireSurveyOwner, async (req, res) => {
+router.patch('/:surveyId/questions/:questionId/jump_rules', authenticate, requireSurveyOwner, structureLock, async (req, res) => {
   try {
     const { questionId } = req.params;
     const { jump_rules } = req.body;

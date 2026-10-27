@@ -29,6 +29,11 @@ const questionSchema = new mongoose.Schema({
   options: [optionSchema],
   validation: { type: mongoose.Schema.Types.Mixed, default: {} },
   jump_rules: [jumpRuleSchema],
+
+  // ── 第二阶段：快照来源（旧数据为 null，视为独立内嵌题）──
+  source_question_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Question', default: null },
+  source_version: { type: Number, default: null },
+  snapshot_at: { type: Date, default: null },
 }, { _id: true });
 
 // ── 主 schema ──
@@ -70,6 +75,11 @@ const surveySchema = new mongoose.Schema(
       default: false,
     },
     deadline: {
+      type: Date,
+      default: null,
+    },
+    // ── 第二阶段：首次发布时间，只写不清，作为结构锁定标志 ──
+    published_at: {
       type: Date,
       default: null,
     },
