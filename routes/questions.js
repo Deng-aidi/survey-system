@@ -19,6 +19,7 @@ const Survey = require('../models/Survey');
 const Submission = require('../models/Submission');
 const authenticate = require('../middleware/auth');
 const { validateQuestionInput } = require('../utils/questionValidator');
+const { computeSchemaHash } = require('../utils/schemaHash');
 
 const router = express.Router();
 
@@ -96,6 +97,8 @@ async function createNextVersion(source, overrides, parentId) {
         title: content.title.trim(),
         options: content.options || [],
         validation: content.validation || {},
+        is_shared: source.is_shared,
+        shared_with: source.shared_with || [],
       });
     } catch (err) {
       if (err.code === 11000) {
@@ -196,7 +199,8 @@ router.get('/shared', authenticate, async (req, res) => {
     const userId = req.user._id;
 
     const items = await Question.find({
-      _id: { $ne: userId },              // 排除自己创建的（自己的题在 GET / 里）
+      // 排除自己创建的（自己的题在 GET / 里）
+      creator_id: { $ne: new mongoose.Types.ObjectId(userId) },
       archived_at: null,
       $or: [
         { is_shared: true },
@@ -479,28 +483,27 @@ router.get('/:questionId/usages', authenticate, async (req, res) => {
       return res.status(403).json({ code: 'FORBIDDEN', message: '只有创建者可以查看引用情况' });
     }
 
-    // 内嵌数组匹配 + $elemMatch 只投影命中的那一道题
+    // 内嵌数组匹配；取出完整 questions 数组，避免 $elemMatch 只返回第一个命中项
     const surveys = await Survey.find(
       { 'questions.source_question_id': doc._id },
-      {
-        title: 1,
-        status: 1,
-        questions: { $elemMatch: { source_question_id: doc._id } },
-      }
+      { title: 1, status: 1, questions: 1 }
     );
 
-    const usages = surveys.map((survey) => {
-      const hit = survey.questions.find(
+    const usages = [];
+    for (const survey of surveys) {
+      const hits = (survey.questions || []).filter(
         (q) => q.source_question_id && q.source_question_id.equals(doc._id)
       );
-      return {
-        survey_id: survey._id,
-        title: survey.title,
-        status: survey.status,
-        source_version: hit ? hit.source_version : null,
-        local_question_id: hit ? hit._id : null,
-      };
-    });
+      for (const hit of hits) {
+        usages.push({
+          survey_id: survey._id,
+          title: survey.title,
+          status: survey.status,
+          source_version: hit.source_version,
+          local_question_id: hit._id,
+        });
+      }
+    }
 
     res.status(200).json(usages);
   } catch (err) {
@@ -651,39 +654,82 @@ router.get('/:questionId/stats', authenticate, async (req, res) => {
 
     const included_versions = chain.map((v) => v.version);
     const versionIds = chain.map((v) => v._id);
-    const versionIdSet = new Set(versionIds.map((id) => id.toString()));
 
-    // 反查引用这些版本的问卷，收集 (问卷, 本地题) 映射
+    // 反查引用这些版本的问卷（带 creator_id 做隐私过滤）
     const surveys = await Survey.find(
       { 'questions.source_question_id': { $in: versionIds } },
-      { title: 1, questions: 1 }
+      { title: 1, creator_id: 1, questions: 1 }
     );
 
-    const mappings = [];
+    // 跨卷统计权限：只统计当前用户自己的问卷
+    // 他人的问卷（无论是否匿名）全部剔除，只返回被剔除的问卷数
+    const currentUserId = req.user._id.toString();
+    const visibleSurveys = [];
+    let excluded_surveys_count = 0;
+
     for (const survey of surveys) {
-      for (const q of survey.questions) {
-        if (q.source_question_id && versionIdSet.has(q.source_question_id.toString())) {
-          mappings.push({
-            survey_id: survey._id,
-            survey_title: survey.title,
-            local_question_id: q._id,
-            source_version: q.source_version,
-          });
-        }
+      const isMine = survey.creator_id.toString() === currentUserId;
+      if (isMine) {
+        visibleSurveys.push(survey);
+      } else {
+        excluded_surveys_count += 1;
       }
     }
 
-    // 每份问卷（每个快照）各自的作答量
+    // 同一问卷里可能同时引用了这道题的多个版本（v1/v2），
+    // 每个命中快照都要映射进 mappings，聚合时用全部 localIds 查询，答案才不会丢
+    const mappings = [];
+    const surveyBuckets = new Map(); // survey_id -> 该问卷下所有命中快照
+    for (const survey of visibleSurveys) {
+      const sid = String(survey._id);
+
+      const hits = (survey.questions || []).filter(
+        (q) => q.source_question_id &&
+          versionIds.some((vid) => vid.equals(q.source_question_id))
+      );
+      if (!hits.length) continue;
+
+      const bucket = surveyBuckets.get(sid) || {
+        survey_id: survey._id,
+        title: survey.title,
+        localIds: [],
+        versions: [],
+      };
+
+      for (const q of hits) {
+        bucket.localIds.push(q._id);
+        bucket.versions.push(q.source_version);
+        mappings.push({
+          survey_id: survey._id,
+          survey_title: survey.title,
+          local_question_id: q._id,
+          source_version: q.source_version,
+          // 旧快照没有指纹时，用其自身题面现算，避免全部落入同一组
+          schema_hash: q.schema_hash || computeSchemaHash(q.type, q.options, q.validation),
+          snapshot_type: q.type,
+          snapshot_options: q.options,
+        });
+      }
+
+      surveyBuckets.set(sid, bucket);
+    }
+
+    // 按问卷合并：同一问卷内多个版本的作答人数合并统计
     const surveyEntries = await Promise.all(
-      mappings.map(async (m) => ({
-        survey_id: m.survey_id,
-        title: m.survey_title,
-        source_version: m.source_version,
-        answer_count: await Submission.countDocuments({
-          survey_id: m.survey_id,
-          'answers.question_id': m.local_question_id,
-        }),
-      }))
+      [...surveyBuckets.values()].map(async (b) => {
+        const versions = [...new Set(b.versions)].filter((v) => typeof v === 'number');
+        return {
+          survey_id: b.survey_id,
+          title: b.title,
+          // 单版本时就是本身版本号；多版本取最小版本作为代表，完整列表见 source_versions
+          source_version: versions.length ? Math.min(...versions) : null,
+          source_versions: versions,
+          answer_count: await Submission.countDocuments({
+            survey_id: b.survey_id,
+            'answers.question_id': { $in: b.localIds },
+          }),
+        };
+      })
     );
 
     // 总体汇总
@@ -694,25 +740,36 @@ router.get('/:questionId/stats', authenticate, async (req, res) => {
       limit,
     });
 
-    // 多版本：按版本分别统计，相同 value 不跨版本求和（版本间语义可能漂移）
-    if (includeVersions && chain.length > 1) {
-      aggregate.by_version = await Promise.all(
-        chain.map(async (v) => ({
-          version: v.version,
+    // 按快照指纹分组：选项文案/取值/校验不同即视为不同 schema，不做跨组求和
+    const groups = new Map();
+    for (const m of mappings) {
+      if (!groups.has(m.schema_hash)) groups.set(m.schema_hash, []);
+      groups.get(m.schema_hash).push(m);
+    }
+
+    aggregate.by_schema_group = await Promise.all(
+      [...groups.entries()].map(async ([schema_hash, group]) => {
+        const versions = group
+          .map((m) => m.source_version)
+          .filter((v) => typeof v === 'number');
+        return {
+          schema_hash,
+          representative_version: versions.length > 0 ? Math.min(...versions) : null,
           aggregate: await aggregateAnswers({
-            type: v.type,
-            options: v.options,
-            mappings: mappings.filter((m) => m.source_version === v.version),
+            type: group[0].snapshot_type,
+            options: group[0].snapshot_options,
+            mappings: group,
             limit,
           }),
-        }))
-      );
-    }
+        };
+      })
+    );
 
     res.status(200).json({
       question_id: doc._id,
       root_id: doc.root_id,
       included_versions,
+      excluded_surveys_count,
       surveys: surveyEntries,
       aggregate,
     });

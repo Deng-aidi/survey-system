@@ -3,3 +3,4 @@ node_modules/
 *.log
 项目完成报告.md
 data/
+.trae-html-share-packages/

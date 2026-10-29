@@ -472,3 +472,131 @@ F3：
 | 6 | 退出登录后访问 surveys.html 自动跳回登录页 | ✅ |
 
 修复白屏、空答案污染、401 冲突后，填写页 F3 返回 201 时成功页面正常显示 submission_id；统计页零计数选项完整保留。
+
+---
+
+## 第二阶段（M1-M7：题库、快照、跨卷统计、前端改造与收尾）
+
+### 概述
+
+第二阶段把系统从"单问卷闭环"升级为"题库 → 多问卷复用 → 跨问卷统计 → 引用追踪"的完整知识管理体系。核心新增：独立 `questions` 集合、快照字段、版本链、共享、`structureLock` 中间件、跨卷统计、前端题库页。AI 全程参与，经历了**从"快照语义误解"到"版本链设计正确"、从"统计权限过宽"到"隐私收紧"、从"同卷多版本答案丢失"到"答案不遗漏"** 三次大返工。
+
+### 关键工具升级
+
+第二阶段 AI 引入了两个此前未使用的工具链：
+
+| 工具 | 用途 | 价值 |
+|---|---|---|
+| **Jest + Supertest** | 新增 4 个测试文件（题库/快照/统计/共享），独立数据库 `survey_system_test` | 每次修改后 `npm test` 自动验证，避免手工 PowerShell 测试遗漏边界。最终形成 **38 条自动用例** |
+| **Read → Edit → Read 验证循环** | 每次声称修改后，立即 Read 文件确认代码真的落下 | 第一阶段暴露过 AI"声称改了但实际没写入"的问题（ownership CastError 分支、PATCH 非法字段检查），第二阶段全程用 Read 验证，杜绝此类 |
+| **`node --check`** | 改完每个 JS 文件跑语法检查 | 纯前端改造（edit.js / question-bank.js）多次捕获字符串拼接漏引号、括号不匹配等低级错误 |
+
+---
+
+### M1：题库 Schema 与 11 个新接口
+
+**提示词摘要**：新增独立 `questions` 集合，承载版本链 + 共享语义。生成 `POST/GET/PATCH /api/questions`、`POST/GET/restore /api/questions/:id/versions`、`PATCH /sharing`、`GET /usages`、`GET /stats`、`GET /shared` 共 11 个端点。新建 `models/Question.js`、`utils/schemaHash.js`，`server.js` 挂载 `/api/questions` 路由。
+
+**AI 产出**：`Question.js`（版本链字段 + 唯一索引 + versionKey:false）、`routes/questions.js`（全部 11 个端点）、`utils/schemaHash.js`（computeSchemaHash 用 crypto MD5）。
+
+**踩坑点（3 个真实 Bug）**：
+
+| # | Bug | 原因 | 修复 |
+|---|---|---|---|
+| 1 | **PATCH /:id 允许改结构字段** | AI 只写了白名单逻辑，但没在入口拦截"混入 type/title"的请求体 | 加 `CONTENT_FIELDS` Set 与 `MANAGE_FIELDS` Set，检测到白名单外字段立即 400 |
+| 2 | **版本链 parent_id 始终指向自身** | `createNextVersion` 取了被派生版本的 `_id` 当 parent_id，但 `findById` 的结果已是被修改前的内容，parent 应指向"当前链尾" | 修正为 `const latest = await Question.findOne({ root_id }).sort({ version: -1 })`，parent_id 指向链尾 |
+| 3 | **并发创建新版本 E11000 未处理** | 只建了唯一索引但没在应用层捕获。两请求同时计算出 `nextVersion=3`，都写入后一条抛错 | 加 `try/catch err.code === 11000 → continue` 重试 1 次，仍冲突抛 409 VERSION_CONFLICT |
+
+**教训**：AI 写并发控制代码时容易"只建索引不处理异常"，必须 Read 确认 E11000 真被捕获。
+
+---
+
+### M2：问卷快照 + from-library + structureLock
+
+**提示词摘要**：Survey 新增 `published_at` 字段、`questions[]` 新增 `source_question_id / source_version / snapshot_at / schema_hash` 四个快照字段。实现 `POST /api/surveys/:id/questions/from-library`（从题库选题生成快照）和 `middleware/structureLock.js`（已发布问卷结构锁定）。
+
+**AI 产出**：Survey.js 补字段、新建 `structureLock.js`、`surveys.js` 加 from-library 路由（深拷贝 + 权限校验）。
+
+**踩坑点（2 个真实 Bug）**：
+
+| # | Bug | 原因 | 修复 |
+|---|---|---|---|
+| 1 | **from-library 深拷贝漏算 schema_hash** | 快照生成时只填了三个来源字段，没算 `schema_hash`。后续跨卷统计按 hash 分组时全部落入同一组，分叉场景无法区分 | 加 `schema_hash: computeSchemaHash(source.type, source.options, source.validation)` |
+| 2 | **structureLock 条件不完整** | 原 AI 只判 `status !== 'draft'`，没加 `published_at`。第一阶段没有 `published_at` 但 status 已是 open 的旧问卷能被 structureLock 锁住；但已发布过又改回 draft（旧测试数据）的问卷会漏锁 | 改为 `!!survey.published_at || survey.status !== 'draft'`，取或 |
+
+**教训**：快照机制的真正价值（版本链隔离、防篡改、跨卷统计分组）依赖 schema_hash。AI 写快照字段时容易"只写引用字段不写指纹"，必须 Read 验证。
+
+---
+
+### M3：共享 + usages
+
+**提示词摘要**：新增 `PATCH /:id/sharing`（设共享）、`GET /:id/usages`（引用追踪）、`GET /shared`（共享列表）。共享语义：创建者可设 `is_shared`（全站）或 `shared_with`（定向），共享只授予"读 + 使用"，不授予编辑权。
+
+**踩坑点（3 个真实 Bug）**：
+
+| # | Bug | 原因 | 修复 |
+|---|---|---|---|
+| 1 | **共享列表包含自己创建的题** | `GET /shared` 的过滤条件 AI 写成了 `creator_id !== undefined`，没真正排除自己 | 改为 `creator_id: { $ne: new ObjectId(userId) }` |
+| 2 | **usages 用 $elemMatch 投影只返回一条** | 同一问卷多次引用同一题库题（历史遗留）时，`findOne` 用 `{ 'questions.source_question_id': questionId }` + `$elemMatch` 只能取回第一条命中的快照。usages 响应漏报 | 去掉 `$elemMatch` 投影，取回完整 questions 数组，遍历 `filter` 收集全部命中项 |
+| 3 | **新版本没继承共享状态** | `createNextVersion` 只拷贝题面内容，没把 `source.is_shared / source.shared_with` 带进新版本。v1 共享 → 生成 v2 自动变成非共享 | 在 createNextVersion 里加 `is_shared: source.is_shared, shared_with: source.shared_with || []` |
+
+---
+
+### M4：跨卷统计
+
+**提示词摘要**：`GET /api/questions/:id/stats`，按 `versionIds` 反查引用了这道题（或整条版本链）的问卷，统计答卷。输出：`surveys[]` 按问卷拆分、`aggregate` 全局汇总、`by_schema_group` 按 schema_hash 分组、`excluded_surveys_count` 他人问卷计数。
+
+**踩坑点（4 个真实 Bug，第二阶段返工最多的模块）**：
+
+| # | Bug | 原因 | 修复 |
+|---|---|---|---|
+| 1 | **权限越权**：他人的匿名问卷被纳入统计 | AI 初始只拦 `allow_anonymous !== false`，匿名问卷匿名放行，导致创建者能看到别人的答卷数据 | 改为**只统计当前用户自己的问卷**：`survey.creator_id !== currentUserId` 的全部剔除，计入 `excluded_surveys_count`。共享语义下创建者不应知道别人填了什么 |
+| 2 | **按问卷去重逻辑过强**：只取 `hits[0]` | AI 用 `seenSurveys` Set 保证每份问卷只出现一次，但取快照时只取 `hits[0]`。同一问卷引用 v1 和 v2 两个版本时，v2 的答案完全丢失 | 遍历**全部** hits 进 `surveyBuckets`，按 `survey_id` 合并后才做 countDocuments |
+| 3 | **同卷重复加同版本未拦截**（源头） | 统计按 `surveys` 去重后，同卷多份同源快照的答案会被漏掉（只取第一个快照的答案） | 在 from-library 接口**源码头**拦截：`source_question_id === question_id` 时返回 400 DUPLICATE_QUESTION。不同版本（v1/v2 来源不同）允许 |
+| 4 | **answer_count 与 option_counts 重复计数** | AI 用 `Σ option_counts` 作为 answer_count，但多选题一个人可同时选多个值，会把作答人数虚增。正确做法是用独立的 `countDocuments` 按提交文档计数 | answer_count 独立计算：`countDocuments({ survey_id: { $in: surveyIds }, 'answers.question_id': { $in: localIds } })`，与 option_counts 的 `$unwind` 管道分离 |
+
+**教训**：跨卷统计是第二阶段最复杂的模块。AI 每次改动统计逻辑后，我都必须跑 13 条自动测试（尤其是第 7/8/9/10 条），才能确认答案不丢失、计数不虚增。
+
+---
+
+### M7 收尾：A1-A4 + 前端改造
+
+**修复项**：A1 禁止已发布回退 draft（`published_at` 只写不清）、A2 统计按问卷去重（已在 M4 修复）、A3 题库弹窗含共享题（`includeShared=true`）、A4 只读禁用元信息控件。
+
+**踩坑点（1 个真实 Bug）**：
+
+| # | Bug | 原因 | 修复 |
+|---|---|---|---|
+| 1 | **A1 用局部 survey 变量而非 req.survey.published_at** | AI 在 from-library 路由里用了局部 `survey.published_at`，但 status 路由的 survey 挂在 `req.survey`（由 requireSurveyOwner 挂），两处不一致会导致某些路径漏锁 | 统一判断 `req.survey.published_at` |
+
+**前端改造的真实问题**：
+
+| # | 问题 | 暴露方式 | 修复 |
+|---|---|---|---|
+| 1 | 题库页"添加选项"按钮**没绑定点击事件** | 用户人工测试反馈 | `question-bank.js` 里补一行 `$('q-add-option').addEventListener('click', addOptionRow)` |
+| 2 | 用户状态失效时题库返回 404 | M7 改权限后，之前验收的 m7_a 账号遗留数据导致 "用户不存在" 提示 | 统一错误提示为"登录状态已过期"，题库列表请求加 try/catch 优雅降级 |
+| 3 | 跨卷统计 `option_counts` 翻倍 | `question-stats.test.js` 第 10 条断言 `{ a: 2, b: 0 }`，但同卷 v1+v2 两次提交的答案应合并为 `{ a: 4, b: 0 }` | 修正期望；后端按全部命中 localIds 查询已正确合并 |
+
+---
+
+### 第二阶段 AI 使用的整体教训
+
+**好的做法（必须坚持）**：
+1. **每个模块引入 Jest + Supertest 测试**，独立数据库 `survey_system_test`，`npm test` 自动验证。最终 38 条覆盖版本链、快照、结构锁、共享、跨卷统计全部边界。
+2. **Read → Edit → Read 验证循环**，AI 每次声称修改后立即 Read 文件确认，杜绝"声称改了但没写入"。
+3. **修改后先跑 `node --check`** 再跑测试，语法错误先挡掉。
+4. **跨模块边界的思考**：跨卷统计的 Bug（权限越权、答案丢失、计数虚增）都跨越了"题库 / 问卷 / 答卷"三个模块，AI 在单模块上下文里容易漏想，测试驱动是唯一可靠的补盲手段。
+
+**需要改进的地方**：
+1. **并发控制**：AI 写 `createNextVersion` 时只建唯一索引没处理 E11000，必须手动补 retry 逻辑。
+2. **快照的 schema_hash 字段**：AI 容易漏写，但它是跨卷统计按结构分组的核心，必须显式 Read 验证。
+3. **统计口径的诚实性**：需求写"跨卷统计汇聚所有问卷"，但实际实现只统计自己的问卷——文档必须诚实记录这一取舍，答辩时主动说明。
+4. **权限收紧的连锁反应**：改统计权限后，旧测试（第 7/9 条）因 B 的问卷被剔除而失败。每次权限调整都要**检查所有涉及"多用户"的测试用例**，不能只改接口。
+
+---
+
+### 第二阶段最终状态
+
+- 测试：**5 suites / 38 tests passed**，全绿。
+- 文档：`数据库设计.md`（v2.0，含 Question 集合、快照字段、schema_hash）、`API说明.md`（29 端点、新错误码）、`关键逻辑说明.md`（加快照版本链 + 跨卷统计两节）、`测试用例.md`（38 条自动化覆盖）、`AI使用日志.md`（本文件）。
+- 遗留：`.trae-html-share-packages/` 垃圾目录需清理，`.gitignore` 补一条。

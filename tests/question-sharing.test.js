@@ -8,6 +8,9 @@
  *   4. GET /api/questions/shared 能看到公开题与定向共享题
  *   5. GET /api/questions/:id/usages 返回引用该题的问卷
  *   6. 非创建者查看 usages → 403
+ *   7. GET /api/questions/shared 不包含自己创建的题目（M7）
+ *   8. 同一问卷多次引用同一题时 usages 返回多条（M7）
+ *   9. 新版本继承源题目的共享状态（M7）
  *
  * 运行：npm test（独立数据库 survey_system_test）
  */
@@ -22,6 +25,7 @@ process.env.MONGODB_URI = process.env.MONGODB_URI
 
 const app = require('../server');
 const Question = require('../models/Question');
+const Survey = require('../models/Survey');
 
 jest.setTimeout(30000);
 
@@ -167,5 +171,85 @@ describe('M3 题目共享与引用追踪', () => {
 
     expect(res.status).toBe(403);
     expect(res.body.code).toBe('FORBIDDEN');
+  });
+
+  test('7. 共享列表不再包含自己创建的题目', async () => {
+    const res = await request(app)
+      .get('/api/questions/shared')
+      .set(auth(user1.token));
+
+    expect(res.status).toBe(200);
+    const ids = res.body.map((q) => q._id);
+    expect(ids).not.toContain(publicQuestionId);
+    expect(ids).not.toContain(targetedQuestionId);
+    expect(ids).not.toContain(privateQuestionId);
+    expect(res.body).toEqual([]);
+  });
+
+  test('8. 同卷重复加入同版本被拦截；历史重复快照 usages 仍返回多条', async () => {
+    const surveyRes = await request(app)
+      .post('/api/surveys')
+      .set(auth(user1.token))
+      .send({ title: '重复引用测试问卷', allow_anonymous: true });
+    expect(surveyRes.status).toBe(201);
+    const duplicateSurveyId = surveyRes.body._id;
+
+    const add1 = await request(app)
+      .post(`/api/surveys/${duplicateSurveyId}/questions/from-library`)
+      .set(auth(user1.token))
+      .send({ question_id: targetedQuestionId });
+    expect(add1.status).toBe(201);
+    const local1 = add1.body.questions[add1.body.questions.length - 1]._id;
+
+    // 规则上线后，同一版本再次加入会被 400 拦截
+    const add2 = await request(app)
+      .post(`/api/surveys/${duplicateSurveyId}/questions/from-library`)
+      .set(auth(user1.token))
+      .send({ question_id: targetedQuestionId });
+    expect(add2.status).toBe(400);
+    expect(add2.body.code).toBe('DUPLICATE_QUESTION');
+
+    // 历史数据可能已存在同卷多份同源快照：直接写入一份，验证 usages 仍能全部返回
+    const snapshot = add1.body.questions[0];
+    const surveyDoc = await Survey.findById(duplicateSurveyId);
+    surveyDoc.questions.push({
+      type: snapshot.type,
+      title: '旧快照副本',
+      order: 1,
+      required: false,
+      options: [],
+      validation: {},
+      jump_rules: [],
+      source_question_id: snapshot.source_question_id,
+      source_version: snapshot.source_version,
+      snapshot_at: new Date(),
+    });
+    await surveyDoc.save();
+    const local2 = String(surveyDoc.questions[surveyDoc.questions.length - 1]._id);
+
+    const res = await request(app)
+      .get(`/api/questions/${targetedQuestionId}/usages`)
+      .set(auth(user1.token));
+
+    expect(res.status).toBe(200);
+    const hits = res.body.filter((u) => u.survey_id === duplicateSurveyId);
+    expect(hits).toHaveLength(2);
+    expect(hits.map((u) => u.local_question_id).sort()).toEqual([local1, local2].sort());
+  });
+
+  test('9. 新版本继承源题目的共享状态', async () => {
+    const res = await request(app)
+      .post(`/api/questions/${targetedQuestionId}/versions`)
+      .set(auth(user1.token))
+      .send({ title: '定向共享题 v2' });
+
+    expect(res.status).toBe(201);
+    expect(res.body.version).toBe(2);
+    expect(res.body.is_shared).toBe(false);
+    expect(res.body.shared_with.map(String)).toEqual([user2.id]);
+
+    const db = await Question.findById(res.body._id);
+    expect(db.is_shared).toBe(false);
+    expect(db.shared_with.map(String)).toEqual([user2.id]);
   });
 });

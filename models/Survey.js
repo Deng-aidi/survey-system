@@ -34,6 +34,8 @@ const questionSchema = new mongoose.Schema({
   source_question_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Question', default: null },
   source_version: { type: Number, default: null },
   snapshot_at: { type: Date, default: null },
+  // 快照题面指纹（type + options + validation 的规范化 MD5），用于统计按 schema 分组
+  schema_hash: { type: String, default: null },
 }, { _id: true });
 
 // ── 主 schema ──

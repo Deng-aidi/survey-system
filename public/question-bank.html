@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>我的题库</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="container">
+    <header>
+      <h1>我的题库</h1>
+      <nav class="page-nav">
+        <span id="who"></span>
+        <a href="surveys.html">我的问卷</a>
+        <a href="question-bank.html" aria-current="page">我的题库</a>
+        <button id="btn-logout" type="button" class="secondary outline">退出登录</button>
+      </nav>
+    </header>
+
+    <div class="bank-actions">
+      <button id="btn-new" type="button">创建新题</button>
+      <button id="btn-shared" type="button" class="secondary outline">可见共享题</button>
+    </div>
+
+    <div id="msg" class="msg"></div>
+
+    <article id="editor" class="create-card hidden">
+      <h2 id="editor-title">创建新题</h2>
+      <form id="form-question">
+        <label>题型
+          <select id="q-type">
+            <option value="single_choice">单选</option>
+            <option value="multiple_choice">多选</option>
+            <option value="text">文本</option>
+            <option value="number">数字</option>
+          </select>
+        </label>
+        <label>题干
+          <input id="q-title" type="text" maxlength="200" placeholder="题目标题（必填）" required>
+        </label>
+
+        <fieldset id="q-fields-choice">
+          <legend>选项（label 为展示文本，value 为统计口径）</legend>
+          <div id="q-options"></div>
+          <button id="q-add-option" type="button" class="secondary outline">添加选项</button>
+        </fieldset>
+
+        <fieldset id="q-fields-multiple" class="hidden">
+          <legend>多选校验</legend>
+          <label>最少选择数<input id="q-min-choices" type="number" min="1"></label>
+          <label>最多选择数<input id="q-max-choices" type="number" min="1"></label>
+        </fieldset>
+
+        <fieldset id="q-fields-text" class="hidden">
+          <legend>文本校验</legend>
+          <label>最少字数<input id="q-min-length" type="number" min="0"></label>
+          <label>最多字数<input id="q-max-length" type="number" min="0"></label>
+        </fieldset>
+
+        <fieldset id="q-fields-number" class="hidden">
+          <legend>数字校验</legend>
+          <label>最小值<input id="q-min" type="number"></label>
+          <label>最大值<input id="q-max" type="number"></label>
+          <label><input id="q-integer" type="checkbox"> 只允许整数</label>
+        </fieldset>
+
+        <div class="bank-actions">
+          <button type="submit">保存</button>
+          <button id="btn-cancel-edit" type="button" class="secondary outline">取消</button>
+        </div>
+      </form>
+    </article>
+
+    <table class="striped">
+      <thead>
+        <tr><th>题干</th><th>题型</th><th>版本</th><th>操作</th></tr>
+      </thead>
+      <tbody id="question-list"></tbody>
+    </table>
+
+    <dialog id="dlg-sharing">
+      <article>
+        <header>
+          <button type="button" data-close aria-label="关闭" rel="prev"></button>
+          <h2>共享设置</h2>
+        </header>
+        <form id="form-sharing">
+          <label><input id="sh-public" type="checkbox"> 全站公开（is_shared）</label>
+          <label>定向共享用户 ID（逗号或空格分隔）
+            <textarea id="sh-users" placeholder="粘贴用户 ID，例如：6650f0c2a1b2c3d4e5f60718"></textarea>
+          </label>
+          <div id="sharing-msg" class="msg"></div>
+          <button type="submit">保存共享设置</button>
+        </form>
+      </article>
+    </dialog>
+
+    <dialog id="dlg-versions">
+      <article>
+        <header>
+          <button type="button" data-close aria-label="关闭" rel="prev"></button>
+          <h2>版本历史</h2>
+        </header>
+        <div id="versions-list"></div>
+        <div id="versions-msg" class="msg"></div>
+      </article>
+    </dialog>
+
+    <dialog id="dlg-stats">
+      <article>
+        <header>
+          <button type="button" data-close aria-label="关闭" rel="prev"></button>
+          <h2>跨卷统计</h2>
+        </header>
+        <p class="callout callout-info">当前仅统计你创建的问卷里引用本题的答案</p>
+        <div id="stats-body"></div>
+      </article>
+    </dialog>
+
+    <dialog id="dlg-usages">
+      <article>
+        <header>
+          <button type="button" data-close aria-label="关闭" rel="prev"></button>
+          <h2>被哪些问卷使用</h2>
+        </header>
+        <div id="usages-body"></div>
+      </article>
+    </dialog>
+  </main>
+
+  <script src="api.js"></script>
+  <script src="question-bank.js"></script>
+</body>
+</html>

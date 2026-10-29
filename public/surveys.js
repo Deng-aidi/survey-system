@@ -69,7 +69,12 @@
     for (const s of surveys) {
       const tr = document.createElement('tr');
       appendCell(tr, s.title);
-      appendCell(tr, STATUS_TEXT[s.status] || s.status);
+      const statusTd = document.createElement('td');
+      const statusBadge = document.createElement('span');
+      statusBadge.className = 'status-badge ' + (s.status || 'draft');
+      statusBadge.textContent = STATUS_TEXT[s.status] || s.status;
+      statusTd.appendChild(statusBadge);
+      tr.appendChild(statusTd);
       appendCell(tr, String(s.question_count));
       appendCell(tr, fmtTime(s.created_at));
 

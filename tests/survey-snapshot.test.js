@@ -8,6 +8,7 @@
  *   4. 发布后从题库加题 → 409
  *   5. 发布后改跳转规则 → 409
  *   6. 旧式问卷（无 source 字段）draft 状态加题仍正常
+ *   7. 已发布问卷不能回退 draft（open/closed → draft 均 409）
  */
 const mongoose = require('mongoose');
 const request = require('supertest');
@@ -156,5 +157,47 @@ describe('M2 问卷快照与结构锁定', () => {
     expect(q.source_version).toBeNull();
     expect(q.snapshot_at).toBeNull();
     expect(q.title).toBe('旧式题目');
+  });
+
+  test('7. 已发布问卷不能回退 draft；未发布过的 draft → open 正常', async () => {
+    // open → draft：409
+    const openBack = await request(app)
+      .patch(`/api/surveys/${surveyId}/status`)
+      .set(auth(token))
+      .send({ status: 'draft' });
+
+    expect(openBack.status).toBe(409);
+    expect(openBack.body.code).toBe('CANNOT_REVERT_TO_DRAFT');
+
+    // closed → draft：409
+    const closed = await request(app)
+      .patch(`/api/surveys/${surveyId}/status`)
+      .set(auth(token))
+      .send({ status: 'closed' });
+    expect(closed.status).toBe(200);
+
+    const closedBack = await request(app)
+      .patch(`/api/surveys/${surveyId}/status`)
+      .set(auth(token))
+      .send({ status: 'draft' });
+
+    expect(closedBack.status).toBe(409);
+    expect(closedBack.body.code).toBe('CANNOT_REVERT_TO_DRAFT');
+
+    // 从未发布过的 draft → open：正常
+    const fresh = await request(app)
+      .post('/api/surveys')
+      .set(auth(token))
+      .send({ title: '未发布过的草稿', allow_anonymous: true });
+    expect(fresh.status).toBe(201);
+
+    const freshOpen = await request(app)
+      .patch(`/api/surveys/${fresh.body._id}/status`)
+      .set(auth(token))
+      .send({ status: 'open' });
+
+    expect(freshOpen.status).toBe(200);
+    expect(freshOpen.body.status).toBe('open');
+    expect(freshOpen.body.published_at).toBeTruthy();
   });
 });

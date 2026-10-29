@@ -1,5 +1,73 @@
 /* 全站定制样式：Pico.css 之后的补充与覆盖，仅控制视觉，不承载业务逻辑 */
 
+/* ── 设计系统变量（深蓝主色 / 语义色）── */
+:root {
+  --primary: #16375c;
+  --color-success: #16a34a;
+  --color-warning: #b45309;
+}
+
+/* ── 状态徽章：draft 用 success，open/closed 用 warning ── */
+.status-badge {
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.status-badge.draft { background: rgba(22, 163, 74, 0.12); color: var(--color-success); }
+.status-badge.open, .status-badge.closed { background: rgba(180, 83, 9, 0.12); color: var(--color-warning); }
+
+/* ── 空状态：居中图标 + 白话引导 ── */
+.empty-state { text-align: center; padding: 1.6rem 1rem; color: var(--pico-muted-color, #6b7280); }
+.empty-state .empty-icon { font-size: 1.8rem; display: block; margin-bottom: 0.4rem; }
+.empty-state .empty-guide { font-size: 0.85rem; margin-top: 0.3rem; }
+
+/* ── 提示框：左侧色条 + 浅底色，用于解释快照/锁定/版本概念 ── */
+.callout {
+  border-left: 4px solid var(--primary);
+  background: rgba(22, 55, 92, 0.06);
+  border-radius: 6px;
+  padding: 0.6rem 0.9rem;
+  margin: 0.6rem 0;
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+.callout-warning { border-left-color: var(--color-warning); background: rgba(180, 83, 9, 0.08); }
+.callout-info { border-left-color: var(--primary); background: rgba(22, 55, 92, 0.06); }
+.callout a { color: var(--color-warning); }
+
+/* ── 统计弹窗：计数条与数字摘要 ── */
+.bar-primary { background: var(--primary); }
+.num-stats { display: flex; gap: 1.5rem; flex-wrap: wrap; margin: 0.5rem 0; }
+.num-stats .num-item strong { display: block; font-size: 1.2rem; color: var(--primary); }
+.num-stats .num-item span { color: var(--pico-muted-color, #6b7280); font-size: 0.82rem; }
+
+/* ── 引用徽章 ── */
+.usage-badge {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  background: rgba(22, 55, 92, 0.08);
+  color: var(--primary);
+  border: 1px solid rgba(22, 55, 92, 0.25);
+  cursor: pointer;
+}
+.usage-badge:hover { background: rgba(22, 55, 92, 0.15); }
+
+/* ── 版本时间线 ── */
+.version-timeline { border-left: 2px solid var(--pico-muted-border-color, #e5e7eb); padding-left: 1rem; }
+.version-item.current strong::after {
+  content: "（当前版本）";
+  color: var(--color-success);
+  font-weight: 600;
+  font-size: 0.82rem;
+  margin-left: 0.3rem;
+}
+
 /* ── 通用 ── */
 main > header {
   display: flex;
@@ -49,6 +117,22 @@ td button { margin-right: 0.4rem; }
 }
 .q-card h3 { margin: 0 0 0.4rem; font-size: 1.05rem; }
 .q-meta, .q-options { color: var(--pico-muted-color, #6b7280); font-size: 0.85rem; margin-bottom: 0.3rem; }
+/* 来源标注做成小型 callout：快照来源提示，过期时琥珀警示 */
+.q-source {
+  color: var(--pico-muted-color, #6b7280);
+  font-size: 0.85rem;
+  margin-bottom: 0.3rem;
+  border-left: 3px solid var(--primary);
+  background: rgba(22, 55, 92, 0.05);
+  border-radius: 4px;
+  padding: 0.3rem 0.6rem;
+}
+.q-source.outdated {
+  color: var(--color-warning);
+  border-left-color: var(--color-warning);
+  background: rgba(180, 83, 9, 0.08);
+}
+.q-source a { color: var(--color-warning); margin-left: 0.4rem; }
 .jump-rules { font-size: 0.85rem; margin: 0.5rem 0; padding-left: 1.2rem; }
 /* .jump-form 的 display 由 edit.js 内联切换（none/flex），这里只设视觉属性 */
 .jump-form {
@@ -115,3 +199,21 @@ td button { margin-right: 0.4rem; }
 .values { margin: 0.5rem 0; padding-left: 1.2rem; }
 .values li { margin: 0.25rem 0; word-break: break-all; }
 .meta { color: var(--pico-muted-color, #6b7280); font-size: 0.85rem; }
+
+/* ── 第二阶段：全局导航与题库页 ── */
+.page-nav { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+.page-nav a { text-decoration: none; }
+.page-nav a[aria-current="page"] { font-weight: 600; }
+.bank-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin: 0.5rem 0; }
+.version-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--pico-muted-border-color, #e5e7eb);
+}
+.version-item:last-child { border-bottom: none; }
+.version-meta { color: var(--pico-muted-color, #6b7280); font-size: 0.85rem; margin-top: 0.2rem; }
+/* 版本来源标注：v2 (源自 v1) */
+.version-origin { color: var(--pico-muted-color, #6b7280); font-size: 0.78rem; font-weight: 400; }

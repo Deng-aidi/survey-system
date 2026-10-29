@@ -44,17 +44,22 @@ Token 为 JWT（HS256 签名），payload 含 `{ _id, username }`，有效期由
 | 400 | MALFORMED_REQUEST | 请求体格式不合法（缺字段、类型不对、混传非法字段） |
 | 400 | VALIDATION_ERROR | Mongoose Schema 校验未通过 |
 | 400 | INVALID_JUMP_RULE | 跳转规则配置非法（Q2 配置阶段） |
+| 400 | DUPLICATE_QUESTION | 同一问卷重复添加同一版本的同一题库题（跨卷统计防漏算，见第二阶段 M7） |
 | 401 | UNAUTHORIZED | 无 token / 无效 token |
 | 401 | LOGIN_REQUIRED | 该问卷仅限登录用户填写（匿名访问非匿名问卷） |
 | 403 | FORBIDDEN | 非创建者访问他人问卷 |
 | 403 | SURVEY_NOT_OPEN | 问卷处于 draft 状态，尚未发布 |
 | 403 | SURVEY_CLOSED | 问卷已关闭 |
 | 403 | SURVEY_EXPIRED | 问卷已过截止时间 |
+| 403 | QUESTION_NOT_ACCESSIBLE | 无权限使用该题库题（既非创建者、也非共享对象） |
 | 404 | NOT_FOUND | 路由不存在 |
 | 404 | SURVEY_NOT_FOUND | 问卷不存在（按 token 查找时） |
-| 404 | QUESTION_NOT_FOUND | 题目不存在 |
-| 409 | DUPLICATE_KEY | 用户名重复注册 |
+| 404 | QUESTION_NOT_FOUND | 题目不存在（问卷内嵌题或题库题） |
+| 409 | DUPLICATE_KEY | 用户名重复注册 / 题库版本号并发冲突 |
 | 409 | SURVEY_CONFLICT | 填写期间问卷结构被修改，版本不匹配 |
+| 409 | SURVEY_STRUCTURE_LOCKED | 问卷已发布或已关闭，结构不可修改（加题、改跳转、从题库加、删题） |
+| 409 | CANNOT_REVERT_TO_DRAFT | 已发布过的问卷不能再回退 draft（open / closed → draft 均拒绝） |
+| 409 | VERSION_CONFLICT | 题库版本号并发冲突，创建新版本时重试后仍撞号 |
 | 422 | INVALID_JUMP_RULE | 发布时跳转规则校验未通过 |
 | 500 | INTERNAL_ERROR | 服务器内部错误 |
 
@@ -466,3 +471,219 @@ answer 形态：
 | 14 | Fill (F3) | POST | /api/surveys/by-token/:token/submissions | 可选 |
 | 15 | Stats (T1) | GET | /api/surveys/:surveyId/stats | 是 |
 | 16 | Stats (T2) | GET | /api/surveys/:surveyId/stats/:questionId | 是 |
+| 17 | 题库 | POST | /api/questions | 是 |
+| 18 | 题库 | GET | /api/questions | 是 |
+| 19 | 题库 | GET | /api/questions/:questionId | 是 |
+| 20 | 题库 | PATCH | /api/questions/:questionId | 是 |
+| 21 | 题库 | POST | /api/questions/:questionId/versions | 是 |
+| 22 | 题库 | GET | /api/questions/:questionId/versions | 是 |
+| 23 | 题库 | POST | /api/questions/:questionId/restore | 是 |
+| 24 | 题库 | PATCH | /api/questions/:questionId/sharing | 是 |
+| 25 | 题库 | GET | /api/questions/:questionId/usages | 是 |
+| 26 | 题库 | GET | /api/questions/:questionId/stats | 是 |
+| 27 | 题库 | GET | /api/questions/shared | 是 |
+| 28 | 问卷 | DELETE | /api/surveys/:surveyId/questions/:questionId | 是 |
+| 29 | 问卷 | POST | /api/surveys/:surveyId/questions/from-library | 是 |
+
+---
+
+## 8. 题库模块（第二阶段新增，11 个端点）
+
+挂载在 `/api/questions` 前缀下，全部需鉴权。权限分三类：创建者（可读可写）、共享对象（可读 + 可在自己问卷里引用）、其他登录用户（`is_shared=true` 时可读 + 可引用）。
+
+### 8.1 POST /api/questions — 新建题库题（v1）
+
+是否需鉴权：是（任何登录用户都能建题库题）
+
+请求体：**仅允许** `type / title / options / validation` 四个字段，混传 `order / required / jump_rules` 等问卷上下文字段返回 400。
+
+```json
+{
+  "type": "single_choice",
+  "title": "你更喜欢哪种饮品？",
+  "options": [
+    { "label": "咖啡", "value": "coffee" },
+    { "label": "茶", "value": "tea" }
+  ],
+  "validation": {}
+}
+```
+
+成功响应 `201`：返回完整 Question 文档（含 `root_id = 自身 _id`、`parent_id = null`、`version = 1`）。
+
+主要错误：400 参数错（缺 type / title、非法字段、options 缺 value）。
+
+### 8.2 GET /api/questions — 我的题库（可含共享）
+
+是否需鉴权：是
+
+可选查询参数：`?type=single_choice`、`?keyword=coffee`（题干模糊匹配）、`?includeShared=true`。
+
+- 默认（不带 `includeShared`）：只返回当前用户自己创建的、未归档的题库题；
+- `includeShared=true`：额外包含 `is_shared=true` 的公开共享题和 `shared_with` 含当前用户的定向共享题；**自己创建的题同时也会在结果中返回**。
+
+成功响应 `200`：数组，按 `updated_at` 倒序，最多 200 条。每条含完整 Question 文档。
+
+### 8.3 GET /api/questions/shared — 可见共享题
+
+是否需鉴权：是
+
+无请求体。返回当前用户**能看到但不是自己创建**的共享题（`is_shared=true` 或 `shared_with` 含当前用户）。用于 "从题库添加" 时单独切到共享视角。
+
+成功响应 `200`：数组，与 8.2 相同结构。
+
+### 8.4 GET /api/questions/:questionId — 题库题详情
+
+是否需鉴权：是（需有读权限）
+
+成功响应 `200`：完整 Question 文档。
+
+主要错误：403 QUESTION_NOT_ACCESSIBLE（既非创建者、也非共享对象）、404 QUESTION_NOT_FOUND。
+
+### 8.5 PATCH /api/questions/:questionId — 仅改共享/归档字段
+
+是否需鉴权：是（仅创建者）
+
+请求体**仅允许** `is_shared / shared_with / archived_at` 三个字段，混传结构字段（`type / title / options / validation`）返回 400 `QUESTION_STRUCTURE_IMMUTABLE`。**改题必须走 POST /versions**，生成新版本。
+
+```json
+{ "is_shared": true }
+```
+
+成功响应 `200`：返回更新后的完整 Question。
+
+### 8.6 POST /api/questions/:questionId/versions — 生成新版本
+
+是否需鉴权：是（仅创建者）
+
+请求体可选：不传时沿用当前版本内容；传 `type / title / options / validation` 时用新值覆盖（生成"基于当前版本的 vN+1"）。
+
+```json
+{ "title": "你现在更喜欢哪种饮品？（v2）" }
+```
+
+成功响应 `201`：新 Question 文档。关键字段：`root_id` 继承根节点、`parent_id = 当前文档 _id`、`version = 链内最大版本 + 1`、`is_shared / shared_with` 继承当前版本。
+
+并发：`{root_id, version}` 唯一索引防重，冲突时应用层重试 1 次。
+
+主要错误：409 VERSION_CONFLICT（重试后仍撞号）、403 非创建者、404 不存在。
+
+### 8.7 GET /api/questions/:questionId/versions — 版本链
+
+是否需鉴权：是（需有读权限）
+
+成功响应 `200`：数组，按 `version` 升序返回整条链上所有版本的完整 Question 文档。
+
+### 8.8 POST /api/questions/:questionId/restore — 基于旧版生成新版
+
+是否需鉴权：是（仅创建者）
+
+无请求体。**不覆盖**旧版本——而是用被恢复版本的内容，再生成一个新版本（`version = 链内最大 + 1`），`parent_id` 指向链尾，保持线性历史。
+
+成功响应 `201`：新 Question 文档。
+
+### 8.9 PATCH /api/questions/:questionId/sharing — 显式共享设置
+
+是否需鉴权：是（仅创建者）
+
+请求体：`{ is_shared: boolean, shared_with: [userId1, userId2] }`。禁止把自己加进 `shared_with`（返回 400）。
+
+成功响应 `200`：返回更新后的 Question。
+
+### 8.10 GET /api/questions/:questionId/usages — 引用追踪
+
+是否需鉴权：是（仅创建者）
+
+成功响应 `200`：
+
+```json
+{
+  "question_id": "...",
+  "root_id": "...",
+  "usages": [
+    { "survey_id": "...", "title": "用户调研 v1", "status": "open",
+      "source_version": 1, "local_question_id": "..." },
+    { "survey_id": "...", "title": "用户调研 v1", "status": "open",
+      "source_version": 1, "local_question_id": "..." }
+  ]
+}
+```
+
+同一问卷多次引用同一题（同版本或不同版本）会返回多条记录。仅创建者可调用（隐私保护：他人不应看到自己问卷被哪些题引用）。
+
+### 8.11 GET /api/questions/:questionId/stats — 跨卷统计
+
+是否需鉴权：是（仅创建者）
+
+可选查询参数：
+- `?includeVersions=true`：统计整条版本链上所有版本（默认只统计当前版本）；
+- `?limit=N`：数字题/文本题的 `all_values` 最多返回 N 条（默认 50）。
+
+**统计口径**：只统计当前用户自己创建的问卷。他人创建的问卷（无论是否匿名）全部剔除，计入 `excluded_surveys_count`。
+
+**按 schema_hash 分组**：同根题的不同快照可能有不同题面（draft 期允许本地改写），用 `schema_hash`（`type + options + validation` 规范化 MD5）分组。相同结构的快照答案合并统计，不同结构独立成组，避免本地改写污染统计。
+
+**多版本同卷合并**：同一问卷里同时引用了 v1 和 v2 时，`answer_count` 按提交文档计数（同一人同时答了 v1 和 v2 只算 1 人），选项计数合并两个版本的答案（不遗漏）。
+
+成功响应 `200`：
+
+```json
+{
+  "question_id": "...",
+  "root_id": "...",
+  "included_versions": [1, 2],
+  "excluded_surveys_count": 1,
+  "surveys": [
+    { "survey_id": "...", "title": "用户调研",
+      "source_versions": [1, 2], "answer_count": 4 }
+  ],
+  "aggregate": {
+    "answer_count": 4,
+    "by_schema_group": [
+      {
+        "schema_hash": "a1b2c3...",
+        "representative_version": 1,
+        "aggregate": {
+          "option_counts": [
+            { "option_value": "coffee", "option_label": "咖啡", "count": 3 },
+            { "option_value": "tea", "option_label": "茶", "count": 1 }
+          ]
+        }
+      }
+    ]
+  }
+}
+```
+
+主要错误：403 FORBIDDEN（非创建者，即使能看到这道共享题）、404 QUESTION_NOT_FOUND。
+
+---
+
+## 9. 问卷结构端点（第二阶段新增 2 个）
+
+### 9.1 POST /api/surveys/:surveyId/questions/from-library — 从题库选题生成快照
+
+是否需鉴权：是（`authenticate + requireSurveyOwner + structureLock`）
+
+请求体：
+```json
+{
+  "question_id": "6512a9f0...",
+  "required": false,
+  "order": 3
+}
+```
+
+- 题库题读权限 = 创建者 ∪ `is_shared=true` ∪ `shared_with` 含当前用户；无权限返回 403 QUESTION_NOT_ACCESSIBLE；
+- 同一问卷**同一版本不允许重复添加**（`source_question_id === question_id` 即命中），返回 400 DUPLICATE_QUESTION；
+- 已发布/已关闭问卷返回 409 SURVEY_STRUCTURE_LOCKED。
+
+成功响应 `201`：返回更新后的完整 Survey。新题目 `_id` 是本地生成的 ObjectId，与题库题 `_id` 不同；`source_question_id / source_version / snapshot_at / schema_hash` 自动写入。
+
+### 9.2 DELETE /api/surveys/:surveyId/questions/:questionId — 删除问卷内题目
+
+是否需鉴权：是（`authenticate + requireSurveyOwner + structureLock`）
+
+成功响应 `200`：返回更新后的完整 Survey。删除后自动清理指向该题的跳转规则（避免悬空引用导致发布校验失败）；剩余题目 `order` 重排为 0..n-1。
+
+主要错误：404 QUESTION_NOT_FOUND、409 SURVEY_STRUCTURE_LOCKED、403 FORBIDDEN。

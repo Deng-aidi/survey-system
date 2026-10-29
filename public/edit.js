@@ -46,7 +46,7 @@
   }
 
   function isReadOnly() {
-    return survey.status === 'open';
+    return !!(survey.published_at || survey.status !== 'draft');
   }
 
   // ISO → datetime-local 输入框格式（YYYY-MM-DDTHH:mm），按本地时区取字段
@@ -69,25 +69,168 @@
 
     var readOnly = isReadOnly();
     $('readonly-tip').style.display = readOnly ? '' : 'none';
+    $('publish-callout').style.display = readOnly ? '' : 'none';
     $('btn-publish').style.display = readOnly ? 'none' : '';
+    $('btn-from-library').style.display = readOnly ? 'none' : '';
     $('form-add').style.display = readOnly ? 'none' : '';
     document.querySelector('h2').style.display = readOnly ? 'none' : '';
+    document.querySelectorAll('#survey-info input, #survey-info select, #survey-info textarea, #btn-save-settings')
+      .forEach(function (el) { el.disabled = readOnly; });
 
     var sorted = survey.questions.slice().sort(function (a, b) { return a.order - b.order; });
     $('question-list').innerHTML = sorted.length
       ? sorted.map(function (q, idx) { return questionHtml(q, idx, sorted, readOnly); }).join('')
-      : '<p>暂无题目，请在下方添加。</p>';
+      : '<p>还没有题目，先在上方创建一道，或者从题库直接选择吧！</p>';
+
+    annotateSourceVersions();
   }
+
+  // 快照题的来源标注；题库已有更新版本时提示（仅展示，不自动同步）
+  function annotateSourceVersions() {
+    survey.questions.filter(function (q) { return q.source_question_id; }).forEach(async function (q) {
+      var el = document.getElementById('src-' + q._id);
+      if (!el) return;
+      try {
+        var chain = await API.get('/api/questions/' + q.source_question_id + '/versions');
+        var latest = chain.reduce(function (max, v) { return v.version > max ? v.version : max; }, 0);
+        if (latest > q.source_version) {
+          el.innerHTML = '[来自题库 v' + q.source_version + '；题库已有 v' + latest + '，建议新建问卷使用新版本]' +
+            '<a href="question-bank.html">去题库查看新版本</a>';
+          el.classList.add('outdated');
+        }
+      } catch (err) {
+        // 无权查看版本链时保留基础标注
+      }
+    });
+  }
+
+  // ── 从题库加入问卷 ──
+  var dlgLibrary = $('dlg-library');
+  var libraryList = $('library-list');
+  var libraryMsg = $('library-msg');
+
+  function renderLibrary(items, currentUserId) {
+    libraryList.innerHTML = '';
+
+    if (!items.length) {
+      var emptyRow = document.createElement('tr');
+      var emptyCell = document.createElement('td');
+      emptyCell.colSpan = 4;
+      emptyCell.innerHTML = '<div class="empty-state">题库为空<div class="empty-guide">还没有题目，先去题库创建一道题，之后可跨问卷复用</div></div>';
+      emptyRow.appendChild(emptyCell);
+      libraryList.appendChild(emptyRow);
+      return;
+    }
+
+    items.forEach(function (q) {
+      var tr = document.createElement('tr');
+
+      var titleCell = document.createElement('td');
+      // 同一 root 的不同版本都会出现在列表里，标出版本号才能明确选哪一版
+      titleCell.textContent = q.title + '（v' + q.version + '）';
+
+      var typeCell = document.createElement('td');
+      typeCell.textContent = TYPE_LABEL[q.type] || q.type;
+
+      var sourceCell = document.createElement('td');
+      // 取不到当前用户信息时只影响“来源”标注，不影响列表与加入
+      sourceCell.textContent = !currentUserId
+        ? '—'
+        : (String(q.creator_id) === String(currentUserId) ? '我的' : '共享');
+
+      var opCell = document.createElement('td');
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = '加入';
+      btn.addEventListener('click', async function () {
+        try {
+          await API.post('/api/surveys/' + surveyId + '/questions/from-library', {
+            question_id: q._id,
+            required: false,
+          });
+          dlgLibrary.close();
+          await load();
+          showMsg('已从题库添加');
+        } catch (err) {
+          libraryMsg.textContent = err.message || '添加失败';
+          libraryMsg.className = 'msg error';
+        }
+      });
+      opCell.appendChild(btn);
+
+      tr.appendChild(titleCell);
+      tr.appendChild(typeCell);
+      tr.appendChild(sourceCell);
+      tr.appendChild(opCell);
+      libraryList.appendChild(tr);
+    });
+  }
+
+  $('btn-from-library').addEventListener('click', async function () {
+    libraryMsg.textContent = '';
+    libraryMsg.className = 'msg';
+    libraryList.innerHTML = '';
+    dlgLibrary.showModal();
+
+    // ① 题库列表是主数据，先取；失败才真正无法继续
+    var items;
+    try {
+      items = await API.get('/api/questions?includeShared=true');
+    } catch (err) {
+      libraryMsg.textContent = '加载题库失败：' + (err.message || '未知错误');
+      libraryMsg.className = 'msg error';
+      return;
+    }
+
+    // ② 当前用户 ID 只用于标注“我的/共享”，单独容错，不能拖垮整个弹窗
+    var currentUserId = null;
+    try {
+      var me = await API.get('/api/auth/me');
+      currentUserId = me._id;
+    } catch (err) {
+      if (err.status === 404 || err.code === 'USER_NOT_FOUND') {
+        API.clearAuth();
+        libraryMsg.innerHTML = '当前登录账号已不存在（可能被删除或数据库被重置），题库列表已加载，但无法加入。请 <a href="index.html">重新登录或注册</a> 后再试。';
+        libraryMsg.className = 'msg error';
+        return;
+      }
+      if (err.status === 401) {
+        libraryMsg.innerHTML = '登录状态已过期，请 <a href="index.html">重新登录</a> 后再试。';
+        libraryMsg.className = 'msg error';
+        return;
+      }
+      libraryMsg.textContent = '暂时无法确认当前账号身份，来源列显示为“—”，仍可尝试加入：' + (err.message || '');
+      libraryMsg.className = 'msg';
+    }
+    renderLibrary(items, currentUserId);
+  });
+
+  Array.prototype.forEach.call(document.querySelectorAll('[data-close]'), function (btn) {
+    btn.addEventListener('click', function () {
+      var dlg = btn.closest('dialog');
+      if (dlg) dlg.close();
+    });
+  });
 
   function questionHtml(q, idx, sorted, readOnly) {
     var html = '<div class="q-card">';
     html += '<h3>第 ' + (idx + 1) + ' 题：' + esc(q.title) + (q.required ? ' <span style="color:#c00">*</span>' : '') + '</h3>';
     html += '<div class="q-meta">题型：' + (TYPE_LABEL[q.type] || q.type) + '</div>';
+    if (q.source_question_id) {
+      html += '<div class="q-source" id="src-' + q._id + '">[来自题库 v' +
+        (q.source_version == null ? '?' : q.source_version) + ']</div>';
+    }
 
     if (q.options && q.options.length) {
       html += '<div class="q-options">选项：' + q.options.map(function (o) {
         return esc(o.label) + '(' + esc(o.value) + ')';
       }).join('、') + '</div>';
+    }
+
+    // 删除本题（仅草稿阶段可用；发布后由 structureLock 锁定）
+    if (!readOnly) {
+      html += '<button type="button" data-action="del-question" data-qid="' + q._id + '"' +
+        ' title="删除这道题；指向它的跳转规则会一并清除，不可撤销">删除本题</button>';
     }
 
     // 已配置的跳转规则
@@ -103,15 +246,16 @@
     if (!readOnly) {
       html += '<button type="button" data-action="toggle-jump" data-qid="' + q._id + '">配置跳转</button>';
       html += '<div class="jump-form" id="jf-' + q._id + '" style="display:none">';
+      html += '<p class="hint" style="width:100%">当本题答案满足【操作符】+【值】时，跳至【目标题】。问卷发布后跳转规则不可修改。</p>';
 
       var ops = OPERATORS_BY_TYPE[q.type] || [];
-      html += '<select id="jop-' + q._id + '">' + ops.map(function (p) {
+      html += '<select id="jop-' + q._id + '" title="操作符：答案与比较值的比较方式，如“等于”“包含”“≥”">' + ops.map(function (p) {
         return '<option value="' + p[0] + '">' + p[1] + '</option>';
       }).join('') + '</select>';
 
-      html += '<input id="jval-' + q._id + '" type="text" placeholder="比较值（介于：小,大）">';
+      html += '<input id="jval-' + q._id + '" type="text" placeholder="比较值（介于：小,大）" title="值：与答案比较的目标值；“介于”需填两个数字，用逗号分隔，如 18,30">';
 
-      html += '<select id="jtarget-' + q._id + '"><option value="">结束</option>';
+      html += '<select id="jtarget-' + q._id + '" title="目标题：命中规则后要跳转到的题目；选择“结束”则直接交卷"><option value="">结束</option>';
       sorted.forEach(function (other, oidx) {
         if (other._id === q._id) return;
         html += '<option value="' + other._id + '">第 ' + (oidx + 1) + ' 题：' + esc(other.title) + '</option>';
@@ -155,6 +299,20 @@
 
     var q = survey.questions.find(function (x) { return x._id.toString() === qid; });
     if (!q) return;
+
+    if (action === 'del-question') {
+      if (!confirm('确定删除「' + q.title + '」吗？指向它的跳转规则会一并清除，此操作不可撤销。')) return;
+      btn.disabled = true;
+      try {
+        survey = await API.del('/api/surveys/' + surveyId + '/questions/' + qid);
+        render();
+        showMsg('已删除题目');
+      } catch (err) {
+        btn.disabled = false;
+        showMsg(err.message || '删除失败', true);
+      }
+      return;
+    }
 
     if (action === 'add-rule') {
       var rule = buildRule(q, qid);
@@ -326,6 +484,9 @@
 
   // ── 发布 ──
   $('btn-publish').addEventListener('click', async function () {
+    if (!confirm('发布后将锁定题目结构，不可增删题目或修改跳转，但可修改截止时间与说明。是否确认发布？')) {
+      return;
+    }
     $('publish-errors').innerHTML = '';
     try {
       await API.patch('/api/surveys/' + surveyId + '/status', { status: 'open' });

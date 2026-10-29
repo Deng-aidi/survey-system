@@ -11,6 +11,14 @@
 - **版本冲突检测**：乐观锁 `__v` 机制，填写期间问卷结构被修改会返回 409 要求刷新重填
 - **发布前校验**：状态 draft→open 时完整校验跳转规则（引用存在性 + 只允许向前 + DFS 环检测）
 
+## 题库与跨问卷统计（第二阶段）
+
+- **题库版本链**：题目按 `root_id / parent_id / version` 组织，结构修改通过生成新版本完成，不原地覆盖历史。
+- **问卷快照**：从题库加入问卷时生成物化快照；修改题库题不会影响已发布旧问卷与旧答卷，需要新版本时新建问卷重新引用。
+- **结构锁定**：已发布或已关闭的问卷不能加题、改跳转或从题库加题；已发布问卷不能回退 draft。
+- **跨问卷统计口径**：只统计“题主自己创建的、引用了这道题的所有问卷”。同事创建的问卷（无论是否匿名）不进入聚合，统一计入 `excluded_surveys_count`。
+- **统计去重**：同一问卷重复引用同一题时，统计每份问卷只取第一个命中快照，避免选项计数翻倍。
+
 ##  本地运行
 
 ### 环境要求
@@ -62,7 +70,7 @@ npm test
    npm test
    ```
 
-   注：测试使用独立数据库 `survey_system_test`，不会污染业务数据。测试覆盖了：注册登录、创建问卷/加题、以及核心的 F3 路径重放二次校验。
+   注：测试使用独立数据库 `survey_system_test`，不会污染业务数据。当前共 5 个测试文件 / 38 条用例，覆盖注册登录、问卷 CRUD、快照与结构锁定、题库共享、版本链、usages、跨问卷统计与 F3 路径重放校验。
 
 2. **手工接口测试**：完整的 78 条详细测试用例步骤、预期输出与执行结果，见 `docs/测试用例.md`。
 
@@ -78,33 +86,38 @@ npm test
 ├── middleware/
 │   ├── auth.js               # JWT 强制鉴权（Bearer Token）
 │   ├── optionalAuth.js       # 条件鉴权（Fill 模块用）
-│   └── ownership.js          # 创建者身份校验
+│   ├── ownership.js          # 创建者身份校验
+│   └── structureLock.js      # 已发布问卷结构锁定
 ├── models/
 │   ├── User.js               # 用户（bcrypt pre('save') + comparePassword）
-│   ├── Survey.js             # 问卷 + questions[] 内嵌 + deleteOne 级联 Submission
+│   ├── Question.js           # 题库题 + root_id/parent_id/version 版本链
+│   ├── Survey.js             # 问卷 + questions[] 快照 + deleteOne 级联 Submission
 │   └── Submission.js         # 提交记录，answers[] 含 question_type 冗余
 ├── routes/
 │   ├── auth.js               # register / login / me
-│   ├── surveys.js            # Survey CRUD + Question + Stats（10 个端点）
+│   ├── questions.js          # 题库 CRUD / 版本链 / 共享 / usages / 跨卷统计
+│   ├── surveys.js            # Survey CRUD + Question + Stats
 │   └── fill.js               # by-token F1 / F2 / F3
 ├── utils/
 │   ├── jumpResolver.js       # condition_matches（6 种 operator）+ resolve_next_question
-│   └── questionValidator.js  # validateAnswer + 配置校验 + 发布校验
+│   ├── questionValidator.js  # validateAnswer + 配置校验 + 发布校验
+│   └── schemaHash.js         # 题面指纹（type/options/validation 规范化 MD5）
 ├── public/                   # 纯 HTML + 原生 JS 前端（Pico.css CDN）
 │   ├── index.html/index.js   # 登录/注册
 │   ├── surveys.html/js       # 问卷列表 + 创建
-│   ├── edit.html/js          # 问卷编辑器（添加题目 + 配置跳转）
+│   ├── edit.html/js          # 问卷编辑器（添加题目 + 从题库添加 + 配置跳转）
+│   ├── question-bank.html/js # 题库页（建题 / 版本 / 共享 / 恢复）
 │   ├── fill.html/js          # 填写页（F1/F2/F3）
 │   ├── stats.html/js         # 统计页（choice 横向条 / number avg / text 列表）
 │   ├── api.js                # 统一 fetch 封装（自动带 JWT + 401 跳登录）
 │   └── style.css             # 自定义样式（Pico.css 覆盖）
-├── tests/                    # 自动化测试目录
-│   └── api.test.js           # Jest + Supertest 集成测试
-└── docs/                     # 核心设计与测试文档
+├── tests/                    # Jest + Supertest（5 个文件 / 38 条）
+└── docs/                     # 设计与测试文档
     ├── 数据库设计.md
     ├── 关键逻辑说明.md
     ├── API说明.md
     ├── 测试用例.md
+    ├── 第二阶段设计草案.md
     └── AI使用日志.md
 ```
 
@@ -126,6 +139,7 @@ npm test
 - **关键逻辑**：[docs/关键逻辑说明.md](docs/关键逻辑说明.md) — 跳转六种 operator 语义、{matched, target} 设计选择、F3 重放路径二次校验（含完整例子）、空答案判定、创建者鉴权类型不对称问题、optionalAuth 三种状态
 - **API 说明**：[docs/API说明.md](docs/API说明.md) — 16 端点、统一错误码、请求体/响应体示例
 - **测试用例**：[docs/测试用例.md](docs/测试用例.md) — 78 条接口测试汇总表 + 端到端联调记录
+- **第二阶段设计**：[docs/第二阶段设计草案.md](docs/第二阶段设计草案.md) — 题库版本链、快照、结构锁定、共享、usages、跨卷统计与 M7 收尾记录
 - **AI 使用日志**：[docs/AI使用日志.md](docs/AI使用日志.md) — 各模块开发踩坑与 Read 验证策略
 
 ##  License

@@ -11,6 +11,7 @@ const {
   validateJumpRulesExist,
   validate_all_jump_rules_for_publish,
 } = require('../utils/questionValidator');
+const { computeSchemaHash } = require('../utils/schemaHash');
 
 const router = express.Router();
 // ↑ mongoose require 已提升到顶部，aggregate 管道里的 mongoose.Types.ObjectId 可以正常使用
@@ -313,6 +314,14 @@ router.patch('/:surveyId/status', authenticate, requireSurveyOwner, async (req, 
       });
     }
 
+    // 已发布过的问卷不能再回退到 draft（published_at 只写不清）
+    if (status === 'draft' && req.survey.published_at) {
+      return res.status(409).json({
+        code: 'CANNOT_REVERT_TO_DRAFT',
+        message: '问卷已发布过，不能再回到草稿',
+      });
+    }
+
     // 发布前校验：status → open 时统一校验所有 jump_rules
     // ① targetQuestionId 存在或为 null ② 不允许回跳 ③ 规则图无环
     if (status === 'open') {
@@ -416,6 +425,44 @@ router.post('/:surveyId/questions', authenticate, requireSurveyOwner, structureL
 });
 
 // ─────────────────────────────────────────────────────
+// 删除草稿问卷中的一道题
+// DELETE /api/surveys/:surveyId/questions/:questionId
+// 仅草稿可删（structureLock 拦截已发布/已关闭）
+// 同时清理其他题指向该题的跳转规则，并把 order 重排为 0..n-1
+// ─────────────────────────────────────────────────────
+router.delete('/:surveyId/questions/:questionId', authenticate, requireSurveyOwner, structureLock, async (req, res) => {
+  try {
+    const { questionId } = req.params;
+
+    const index = req.survey.questions.findIndex((q) => q._id.toString() === questionId);
+    if (index === -1) {
+      return res.status(404).json({ code: 'QUESTION_NOT_FOUND', message: '题目不存在' });
+    }
+
+    const removedId = req.survey.questions[index]._id.toString();
+    req.survey.questions.splice(index, 1);
+
+    // 清理悬空跳转：删掉目标题后，指向它的规则不再有意义
+    for (const q of req.survey.questions) {
+      if (!Array.isArray(q.jump_rules) || q.jump_rules.length === 0) continue;
+      q.jump_rules = q.jump_rules.filter(
+        (r) => !r.targetQuestionId || r.targetQuestionId.toString() !== removedId
+      );
+    }
+
+    // order 重排，保持连续（加题时按 questions.length 分配，0 起）
+    req.survey.questions.forEach((q, i) => { q.order = i; });
+
+    await req.survey.save();   // save() 保证 __v 递增
+
+    res.status(200).json(req.survey);
+  } catch (err) {
+    console.error('[question DELETE]', err);
+    res.status(500).json({ code: 'INTERNAL_ERROR', message: '服务器内部错误' });
+  }
+});
+
+// ─────────────────────────────────────────────────────
 // Q3（第二阶段）：从题库加入题目 —— 生成快照
 // POST /api/surveys/:surveyId/questions/from-library
 // jump_rules 属于问卷上下文，强制为空，需另行调用 Q2 配置
@@ -459,6 +506,18 @@ router.post('/:surveyId/questions/from-library', authenticate, requireSurveyOwne
       return res.status(403).json({ code: 'QUESTION_NOT_ACCESSIBLE', message: '无权使用该题目' });
     }
 
+    // 同一问卷不允许重复引用同一题库题：
+    // 跨卷统计按问卷去重，只取第一个命中快照；同卷多份同源快照会让其余答案被漏算
+    const duplicated = req.survey.questions.some(
+      (q) => q.source_question_id && q.source_question_id.toString() === question_id
+    );
+    if (duplicated) {
+      return res.status(400).json({
+        code: 'DUPLICATE_QUESTION',
+        message: '该题目已在当前问卷中，请勿重复添加',
+      });
+    }
+
     // 深拷贝题面：value 原样保留（统计口径依赖它），选项 _id 重新生成
     const copiedOptions = (source.options || []).map((o) => ({
       _id: new mongoose.Types.ObjectId(),
@@ -478,6 +537,8 @@ router.post('/:surveyId/questions/from-library', authenticate, requireSurveyOwne
       source_question_id: source._id,
       source_version: source.version,
       snapshot_at: new Date(),
+      // 快照题面指纹：统计按它分组，防止草稿改选项后与其它快照错误合并
+      schema_hash: computeSchemaHash(source.type, source.options, source.validation),
     });
 
     await req.survey.save();
