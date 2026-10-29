@@ -17,7 +17,7 @@
 - **问卷快照**：从题库加入问卷时生成物化快照；修改题库题不会影响已发布旧问卷与旧答卷，需要新版本时新建问卷重新引用。
 - **结构锁定**：已发布或已关闭的问卷不能加题、改跳转或从题库加题；已发布问卷不能回退 draft。
 - **跨问卷统计口径**：只统计“题主自己创建的、引用了这道题的所有问卷”。同事创建的问卷（无论是否匿名）不进入聚合，统一计入 `excluded_surveys_count`。
-- **统计与去重**：同一问卷**不允许重复添加同一版本**的题（返回` \DUPLICATE_QUESTION` 拦截）；如果同一问卷混用了同一题的 v1 和 v2，跨卷统计会合并所有版本的答案，且作答人数按问卷去重（一次提交只算 1 人），避免选项计数翻倍。
+- **统计去重**：同一问卷不允许重复添加同一版本的题（返回 `DUPLICATE_QUESTION` 拦截）；若同一问卷混用了同一题的 v1 和 v2，跨卷统计会合并所有版本的答案，作答人数按提交记录去重（一次提交只算 1 人），避免选项计数翻倍，也避免新版本答案被漏算。
 
 ##  本地运行
 
@@ -58,6 +58,7 @@ npm test
 | http://localhost:3000/edit.html?surveyId=xxx | 问卷编辑器 |
 | http://localhost:3000/fill.html?token=xxx | 填写页 |
 | http://localhost:3000/stats.html?surveyId=xxx | 统计页 |
+| http://localhost:3000/question-bank.html | 题库页（第二阶段：建题 / 版本 / 共享 / 跨卷统计） |
 | http://localhost:3000/api/health | 后端健康检查 |
 
 ### 测试
@@ -70,7 +71,7 @@ npm test
    npm test
    ```
 
-   注：测试使用独立数据库 `survey_system_test`，不会污染业务数据。当前共 5 个测试文件 / 38 条用例，覆盖注册登录、问卷 CRUD、快照与结构锁定、题库共享、版本链、usages、跨问卷统计与 F3 路径重放校验。
+   注：测试使用独立数据库 `survey_system_test`，不会污染业务数据。当前共 5 个测试文件 / 42 条用例，覆盖注册登录、问卷 CRUD、快照与结构锁定、题库共享、版本链、usages、跨问卷统计、单卷统计（T1/T2）、F3 路径重放与校验失败/单题校验。
 
 2. **手工接口测试**：完整的 78 条详细测试用例步骤、预期输出与执行结果，见 `docs/测试用例.md`。
 
@@ -111,7 +112,7 @@ npm test
 │   ├── stats.html/js         # 统计页（choice 横向条 / number avg / text 列表）
 │   ├── api.js                # 统一 fetch 封装（自动带 JWT + 401 跳登录）
 │   └── style.css             # 自定义样式（Pico.css 覆盖）
-├── tests/                    # Jest + Supertest（5 个文件 / 38 条）
+├── tests/                    # Jest + Supertest（5 个文件 / 42 条）
 └── docs/                     # 设计与测试文档
     ├── 数据库设计.md
     ├── 关键逻辑说明.md
@@ -135,6 +136,7 @@ npm test
 
 ##  文档索引
 
+- **系统说明**：[docs/系统说明.md](docs/系统说明.md) — 项目目标、两阶段核心功能、目录结构、访问地址与本地运行方式
 - **数据库设计**：[docs/数据库设计.md](docs/数据库设计.md) — 为什么选 MongoDB、集合划分、Schema 字段表、设计权衡（题目嵌入 / answers 冗余 question_type / answer Mixed 四种形态）、索引、已知限制
 - **关键逻辑**：[docs/关键逻辑说明.md](docs/关键逻辑说明.md) — 跳转六种 operator 语义、{matched, target} 设计选择、F3 重放路径二次校验（含完整例子）、空答案判定、创建者鉴权类型不对称问题、optionalAuth 三种状态
 - **API 说明**：[docs/API说明.md](docs/API说明.md) — 29 个端点（含题库版本链、共享、跨卷统计等第二阶段接口）、统一错误码、请求体/响应体示例

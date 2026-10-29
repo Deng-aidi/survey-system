@@ -597,6 +597,8 @@ F3：
 
 ### 第二阶段最终状态
 
-- 测试：**5 suites / 38 tests passed**，全绿。
-- 文档：`数据库设计.md`（v2.0，含 Question 集合、快照字段、schema_hash）、`API说明.md`（29 端点、新错误码）、`关键逻辑说明.md`（加快照版本链 + 跨卷统计两节）、`测试用例.md`（38 条自动化覆盖）、`AI使用日志.md`（本文件）。
+- 测试：**5 suites / 42 tests passed**，全绿。
+- 文档：`数据库设计.md`（v2.0，含 Question 集合、快照字段、schema_hash）、`API说明.md`（29 端点、新错误码）、`关键逻辑说明.md`（加快照版本链 + 跨卷统计两节）、`测试用例.md`（42 条自动化覆盖）、`AI使用日志.md`（本文件）。
 - 遗留：`.trae-html-share-packages/` 垃圾目录需清理，`.gitignore` 补一条。
+
+> 后续补充校验失败、F2 单题校验、单卷统计 T1/T2 用例后，自动化测试增至 42 条（5 suites / 42 tests passed）。
